@@ -95,19 +95,21 @@ class IndodaxHandler:
             return 0.0
 
     def place_buy_order(self, symbol: str, amount_idr: float) -> dict:
-        """Mengeksekusi order Beli (Market) dengan nominal Rupiah tertentu di Indodax."""
+        """Mengeksekusi order Beli dengan pseudo-Market (Limit Order +1% slippage) di Indodax."""
         if self.dry_run:
             logging.info(f"[DRY RUN] Eksekusi Beli di Indodax {symbol} senilai Rp {amount_idr}")
             return {"status": "dry_run", "side": "buy"}
             
         try:
-            # Hitung jumlah koin yang didapat dari nominal Rupiah
             current_price = self.get_current_price(symbol)
             if current_price <= 0:
                 return {}
             amount_base = amount_idr / current_price
             
-            order = self.exchange.create_market_buy_order(symbol, amount_base)
+            # API Indodax tidak mendukung Market Order murni. 
+            # Kita gunakan Limit Order dengan harga beli +1% agar langsung Match (Pseudo-Market)
+            buy_price = current_price * 1.01 
+            order = self.exchange.create_limit_buy_order(symbol, amount_base, buy_price)
             logging.info(f"BUY Order Indodax BERHASIL: {order}")
             return order
         except Exception as e:
@@ -115,13 +117,16 @@ class IndodaxHandler:
             return {}
 
     def place_sell_order(self, symbol: str, amount_base: float) -> dict:
-        """Mengeksekusi order Jual (Market) untuk sejumlah koin tertentu di Indodax."""
+        """Mengeksekusi order Jual dengan pseudo-Market (Limit Order -1% slippage) di Indodax."""
         if self.dry_run:
             logging.info(f"[DRY RUN] Eksekusi Jual di Indodax {amount_base} koin {symbol}")
             return {"status": "dry_run", "side": "sell"}
             
         try:
-            order = self.exchange.create_market_sell_order(symbol, amount_base)
+            current_price = self.get_current_price(symbol)
+            # Limit Order dengan harga jual -1% agar langsung Match (Pseudo-Market)
+            sell_price = current_price * 0.99
+            order = self.exchange.create_limit_sell_order(symbol, amount_base, sell_price)
             logging.info(f"SELL Order Indodax BERHASIL: {order}")
             return order
         except Exception as e:
