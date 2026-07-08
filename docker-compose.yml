@@ -10,7 +10,7 @@ services:
       - mixa_net
     volumes:
       - ./.env:/app/.env
-      - ./trading.db:/app/trading.db
+      - ./data:/app/data
     restart: always
     environment:
       - TZ=Asia/Jakarta

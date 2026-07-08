@@ -38,8 +38,9 @@ class TradeHistory(Base):
     nominal = Column(String)
     timestamp = Column(DateTime, default=get_wib_time)
 
-def init_db(db_url="sqlite:///trading.db"):
+def init_db(db_url="sqlite:///data/trading.db"):
     """Inisialisasi koneksi Database. Bisa baca dari .env jika kelak pindah ke PostgreSQL."""
+    os.makedirs("data", exist_ok=True)
     url = os.getenv("DATABASE_URL", db_url)
     # Jika menggunakan sqlite, tambahkan parameter khusus agar aman untuk multi-thread
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
