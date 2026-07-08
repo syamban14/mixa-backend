@@ -4,8 +4,10 @@ services:
   mixa-backend:
     image: ghcr.io/syamban14/mixa-backend:latest
     container_name: mixa-backend
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
+    networks:
+      - mixa_net
     volumes:
       - ./.env:/app/.env
       - ./trading.db:/app/trading.db
@@ -18,7 +20,12 @@ services:
     container_name: mixa-frontend
     ports:
       - "80:80"
+    networks:
+      - mixa_net
     restart: always
     depends_on:
       - mixa-backend
 
+networks:
+  mixa_net:
+    driver: bridge
