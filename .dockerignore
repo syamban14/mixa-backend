@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+trading.db
+.git
+.gitignore
+.vscode
+frontend/node_modules/
+frontend/dist/
+frontend/build/

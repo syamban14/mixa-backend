@@ -1,0 +1,11 @@
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore secrets and databases
+.env
+trading.db
+
+# Ignore virtual environments
+env/
+venv/
