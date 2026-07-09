@@ -138,8 +138,8 @@ def main():
                     asset_bal = balances.get(koin_utama, 0)
                     estimated_value_idr = asset_bal * current_price_idr
                     
-                    # Filter Receh: Batas aman Rp 15.000
-                    if estimated_value_idr >= 15000 or DRY_RUN:
+                    # Filter Receh: Batas aman Rp 11.000 (Standar Emas)
+                    if estimated_value_idr >= 11000 or DRY_RUN:
                         amount_to_sell = 0.001 if DRY_RUN else asset_bal 
                         order = indodax_executor.place_sell_order(symbol_indodax, amount_to_sell)
                         
@@ -159,7 +159,7 @@ def main():
                             logging.error(f"[{symbol_indodax}] API Indodax menolak Jual. Koin aman, mencoba lagi nanti.")
                             # KITA TIDAK mengupdate last_signals, agar bot ngotot jual lagi di menit depan (Smart Retry)
                     else:
-                        logging.warning(f"[{symbol_indodax}] Sisa saldo receh (Di bawah Rp 15.000). Penjualan diabaikan.")
+                        logging.warning(f"[{symbol_indodax}] Sisa saldo receh (Di bawah Rp 11.000). Penjualan diabaikan.")
                         last_signals[symbol_indodax] = "SELL" # Saldo receh, bungkam agar tidak spam error Indodax
                 
                 # Panggil MIXA AI setiap 15 menit per koin
