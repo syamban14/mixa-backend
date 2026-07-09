@@ -78,17 +78,7 @@ def main():
     current_t = time.time()
     last_mixa_times = {coin: current_t - 900 + (i * 180) for i, coin in enumerate(ALL_SUPPORTED_COINS)}
 
-    # Memuat memori sementara Harga Beli (Entry Prices) dari Database agar tidak hilang saat restart
-    entry_prices = {coin: 0.0 for coin in ALL_SUPPORTED_COINS}
-    try:
-        db_session_init = Session()
-        states = db_session_init.query(BotState).all()
-        for s in states:
-            if s.symbol in entry_prices and s.entry_price:
-                entry_prices[s.symbol] = s.entry_price
-        db_session_init.close()
-    except Exception as e:
-        logging.error(f"Gagal memuat memori Harga Beli: {e}")
+    # (entry_prices dictionary sudah dihapus karena kita menggunakan state.entry_price langsung dari DB)
     
     # 3. Looping Utama Bot
     while True:
@@ -127,7 +117,6 @@ def main():
                     last_signals[symbol_indodax] = "HOLD"
                     last_sell_times[symbol_indodax] = 0.0
                     last_mixa_times[symbol_indodax] = time.time() - 900
-                    entry_prices[symbol_indodax] = state.entry_price or 0.0
                 
                 logging.info(f"[{symbol_indodax}] Mengambil grafik dari API Rahasia Indodax...")
                 df = indodax_executor.fetch_hidden_ohlcv(api_symbol, tf="15", limit=200)
@@ -141,7 +130,7 @@ def main():
                 signal = strategy.analyze(df)
                 
                 # ==== RISK MANAGEMENT (TP/SL) ====
-                entry_price = entry_prices[symbol_indodax]
+                entry_price = state.entry_price or 0.0
                 if entry_price > 0:
                     pnl_pct = ((current_price_idr - entry_price) / entry_price) * 100
                     if pnl_pct <= -coin_sl_pct:
@@ -166,9 +155,9 @@ def main():
                 
                 # Sinkronisasi Cerdas: Jika koin sudah tidak ada di Indodax (dijual manual), reset harga beli
                 estimated_value_idr = asset_bal * current_price_idr
-                if estimated_value_idr < 11000 and entry_prices[symbol_indodax] > 0:
+                if estimated_value_idr < 11000 and (state.entry_price or 0.0) > 0:
                     logging.info(f"[{symbol_indodax}] Saldo koin kosong/receh, menghapus Harga Beli dari memori.")
-                    entry_prices[symbol_indodax] = 0.0
+                    state.entry_price = 0.0
 
                 if signal == "BUY" and last_signals[symbol_indodax] != "BUY":
                     if idr_bal >= coin_buy_amount or DRY_RUN:
@@ -178,7 +167,7 @@ def main():
                             msg = f"🟢 **SINYAL BELI!**\nTarget: {symbol_indodax}\nNominal: Rp {coin_buy_amount:,.0f}"
                             notifier.send_message(msg)
                             last_signals[symbol_indodax] = "BUY"
-                            entry_prices[symbol_indodax] = current_price_idr
+                            state.entry_price = current_price_idr
                             
                             # Catat ke Tabel TradeHistory (Tercatat abadi di Database)
                             trade = TradeHistory(
@@ -200,7 +189,7 @@ def main():
                         
                         if order: # Validasi Ganda: Order benar-benar sukses di Indodax
                             # HITUNG PnL
-                            current_entry = entry_prices[symbol_indodax]
+                            current_entry = state.entry_price or 0.0
                             realized_pnl = None
                             if current_entry > 0:
                                 realized_pnl = ((current_price_idr - current_entry) / current_entry) * 100
@@ -208,7 +197,7 @@ def main():
                             msg = f"🔴 **SINYAL JUAL!**\nTarget: {symbol_indodax}\nKoin Dijual: {amount_to_sell} {koin_utama}"
                             notifier.send_message(msg)
                             last_signals[symbol_indodax] = "SELL"
-                            entry_prices[symbol_indodax] = 0.0
+                            state.entry_price = 0.0
                             last_sell_times[symbol_indodax] = time.time()
                             
                             # Catat ke Tabel TradeHistory
@@ -246,7 +235,6 @@ def main():
                 state.signal = signal
                 state.mode = status_mode
                 state.balances = json.dumps(indodax_executor.get_balance())
-                state.entry_price = entry_prices[symbol_indodax]
                 
                 # Timpa insight jika MIXA baru saja dipanggil
                 if mixa_insight:
