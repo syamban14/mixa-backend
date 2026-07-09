@@ -53,13 +53,24 @@ def init_db(db_url="sqlite:///data/trading.db"):
     
     # Auto-Migration untuk SQLite (Jika update versi)
     if url.startswith("sqlite"):
-        try:
-            with engine.connect() as conn:
-                conn.execute("ALTER TABLE bot_state ADD COLUMN take_profit_pct FLOAT DEFAULT 10.0")
-                conn.execute("ALTER TABLE bot_state ADD COLUMN stop_loss_pct FLOAT DEFAULT 5.0")
-                conn.execute("ALTER TABLE bot_state ADD COLUMN strategy VARCHAR DEFAULT 'MA Crossover'")
-        except Exception:
-            pass # Abaikan jika kolom sudah ada
-            
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN take_profit_pct FLOAT DEFAULT 10.0"))
+            except Exception as e:
+                print(f"Migrasi TP dilewati: {e}")
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN stop_loss_pct FLOAT DEFAULT 5.0"))
+            except Exception as e:
+                print(f"Migrasi SL dilewati: {e}")
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN strategy VARCHAR DEFAULT 'MA Crossover'"))
+            except Exception as e:
+                print(f"Migrasi Strategy dilewati: {e}")
+            try:
+                conn.commit()
+            except Exception:
+                pass
+                
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return SessionLocal
