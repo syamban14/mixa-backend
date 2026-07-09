@@ -61,9 +61,17 @@ def main():
     current_t = time.time()
     last_mixa_times = {coin: current_t - 900 + (i * 180) for i, coin in enumerate(TARGET_COINS)}
 
+    # Memuat memori sementara Harga Beli (Entry Prices) dari Database agar tidak hilang saat restart
     entry_prices = {coin: 0.0 for coin in TARGET_COINS}
-    last_sell_times = {coin: 0.0 for coin in TARGET_COINS}
-
+    try:
+        db_session_init = Session()
+        states = db_session_init.query(BotState).all()
+        for s in states:
+            if s.symbol in entry_prices and s.entry_price:
+                entry_prices[s.symbol] = s.entry_price
+        db_session_init.close()
+    except Exception as e:
+        logging.error(f"Gagal memuat memori Harga Beli: {e}")
     
     # 3. Looping Utama Bot
     while True:
@@ -116,10 +124,17 @@ def main():
                 logging.info(f"[{symbol_indodax}] Harga: Rp {current_price_idr:,.0f} | Sinyal Akhir: {signal}")
                 
                 # Eksekusi Logika jika ada sinyal Beli/Jual
+                balances = indodax_executor.get_balance()
+                idr_bal = balances.get('IDR', 0)
+                asset_bal = balances.get(koin_utama, 0)
+                
+                # Sinkronisasi Cerdas: Jika koin sudah tidak ada di Indodax (dijual manual), reset harga beli
+                estimated_value_idr = asset_bal * current_price_idr
+                if estimated_value_idr < 11000 and entry_prices[symbol_indodax] > 0:
+                    logging.info(f"[{symbol_indodax}] Saldo koin kosong/receh, menghapus Harga Beli dari memori.")
+                    entry_prices[symbol_indodax] = 0.0
+
                 if signal == "BUY" and last_signals[symbol_indodax] != "BUY":
-                    balances = indodax_executor.get_balance()
-                    idr_bal = balances.get('IDR', 0)
-                    
                     if idr_bal >= BUY_AMOUNT_IDR or DRY_RUN:
                         order = indodax_executor.place_buy_order(symbol_indodax, BUY_AMOUNT_IDR)
                         
@@ -142,10 +157,6 @@ def main():
                         last_signals[symbol_indodax] = "BUY" # Saldo habis, bungkam agar tidak spam Indodax
                         
                 elif signal == "SELL" and last_signals[symbol_indodax] != "SELL":
-                    balances = indodax_executor.get_balance()
-                    asset_bal = balances.get(koin_utama, 0)
-                    estimated_value_idr = asset_bal * current_price_idr
-                    
                     # Filter Receh: Batas aman Rp 11.000 (Standar Emas)
                     if estimated_value_idr >= 11000 or DRY_RUN:
                         amount_to_sell = 0.001 if DRY_RUN else asset_bal 
