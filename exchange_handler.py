@@ -110,12 +110,27 @@ class IndodaxHandler:
             # Kita gunakan Limit Order dengan harga beli +1% agar langsung Match (Pseudo-Market)
             buy_price = current_price * 1.01 
             
-            # API v2 fix: sertakan quote_quantity di params
+            # Gunakan Raw POST Trade untuk menghindari bug intercept parameter CCXT
+            market = self.exchange.market(symbol)
+            market_id = market['id']
+            price_str = self.exchange.price_to_precision(symbol, buy_price)
+            
             params = {
-                "quote_quantity": amount_idr,
-                "base_quantity": amount_base
+                "pair": market_id,
+                "type": "buy",
+                "price": price_str,
+                "idr": str(amount_idr), # V1 format
+                "quote_quantity": str(amount_idr) # V2 format fallback
             }
-            order = self.exchange.create_limit_buy_order(symbol, amount_base, buy_price, params=params)
+            
+            logging.info(f"Mengirim Raw POST Trade BUY ke Indodax: {params}")
+            
+            # Call ccxt implicit private endpoint
+            if hasattr(self.exchange, 'private_post_trade'):
+                order = self.exchange.private_post_trade(params)
+            else:
+                order = self.exchange.privatePostTrade(params)
+                
             logging.info(f"BUY Order Indodax BERHASIL: {order}")
             return order
         except Exception as e:
@@ -133,13 +148,29 @@ class IndodaxHandler:
             # Limit Order dengan harga jual -1% agar langsung Match (Pseudo-Market)
             sell_price = current_price * 0.99
             
-            # API v2 fix: sertakan quote_quantity di params
-            quote_qty = amount_base * sell_price
+            # Gunakan Raw POST Trade untuk menghindari bug CCXT
+            market = self.exchange.market(symbol)
+            market_id = market['id']
+            base = market['base'].lower() # e.g., 'btc'
+            
+            price_str = self.exchange.price_to_precision(symbol, sell_price)
+            amount_str = self.exchange.amount_to_precision(symbol, amount_base)
+            
             params = {
-                "quote_quantity": quote_qty,
-                "base_quantity": amount_base
+                "pair": market_id,
+                "type": "sell",
+                "price": price_str,
+                base: amount_str, # V1 format (e.g. btc: "0.001")
+                "quote_quantity": str(amount_base * sell_price) # V2 fallback
             }
-            order = self.exchange.create_limit_sell_order(symbol, amount_base, sell_price, params=params)
+            
+            logging.info(f"Mengirim Raw POST Trade SELL ke Indodax: {params}")
+            
+            if hasattr(self.exchange, 'private_post_trade'):
+                order = self.exchange.private_post_trade(params)
+            else:
+                order = self.exchange.privatePostTrade(params)
+                
             logging.info(f"SELL Order Indodax BERHASIL: {order}")
             return order
         except Exception as e:
