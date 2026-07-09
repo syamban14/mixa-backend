@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import json
+from typing import Optional
 from pydantic import BaseModel
 from database import init_db, BotState, TradeHistory, AppConfig
 
