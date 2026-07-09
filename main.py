@@ -21,11 +21,9 @@ def main():
     API_KEY = os.getenv('INDODAX_API_KEY')
     SECRET_KEY = os.getenv('INDODAX_SECRET_KEY')
     
-    # Pair Indodax bisa banyak, dipisahkan koma. Contoh: BTC/IDR,ETH/IDR
     trading_pairs_env = os.getenv('TRADING_PAIRS', 'BTC/IDR,ETH/IDR')
     TARGET_COINS = [p.strip() for p in trading_pairs_env.split(',')]
     
-    BUY_AMOUNT_IDR = float(os.getenv('BUY_AMOUNT_IDR', 50000))
     DRY_RUN = os.getenv('DRY_RUN', 'True').lower() in ('true', '1', 't')
     
     # Konfigurasi Anti-Spam
@@ -92,6 +90,7 @@ def main():
                     
                 coin_tp_pct = state.take_profit_pct
                 coin_sl_pct = state.stop_loss_pct
+                coin_buy_amount = state.buy_amount
                 
                 logging.info(f"[{symbol_indodax}] Mengambil grafik dari API Rahasia Indodax...")
                 df = indodax_executor.fetch_hidden_ohlcv(api_symbol, tf="15", limit=200)
@@ -135,18 +134,18 @@ def main():
                     entry_prices[symbol_indodax] = 0.0
 
                 if signal == "BUY" and last_signals[symbol_indodax] != "BUY":
-                    if idr_bal >= BUY_AMOUNT_IDR or DRY_RUN:
-                        order = indodax_executor.place_buy_order(symbol_indodax, BUY_AMOUNT_IDR)
+                    if idr_bal >= coin_buy_amount or DRY_RUN:
+                        order = indodax_executor.place_buy_order(symbol_indodax, coin_buy_amount)
                         
                         if order: # Validasi Ganda: Order benar-benar sukses di Indodax
-                            msg = f"🟢 **SINYAL BELI!**\nTarget: {symbol_indodax}\nNominal: Rp {BUY_AMOUNT_IDR:,}"
+                            msg = f"🟢 **SINYAL BELI!**\nTarget: {symbol_indodax}\nNominal: Rp {coin_buy_amount:,.0f}"
                             notifier.send_message(msg)
                             last_signals[symbol_indodax] = "BUY"
                             entry_prices[symbol_indodax] = current_price_idr
                             
                             # Catat ke Tabel TradeHistory (Tercatat abadi di Database)
                             trade = TradeHistory(
-                                symbol=symbol_indodax, action="BUY", price=current_price_idr, nominal=f"Rp {BUY_AMOUNT_IDR:,}"
+                                symbol=symbol_indodax, action="BUY", price=current_price_idr, nominal=f"Rp {coin_buy_amount:,.0f}"
                             )
                             db_session.add(trade)
                         else:

@@ -21,6 +21,7 @@ class BotState(Base):
     take_profit_pct = Column(Float, default=10.0)
     stop_loss_pct = Column(Float, default=5.0)
     strategy = Column(String, default='MA Crossover')
+    buy_amount = Column(Float, default=20000.0)
     mixa_insight = Column(String)
     chart_data = Column(String) # Disimpan dalam format JSON string (50 Lilin Terakhir)
     last_update = Column(DateTime, default=get_wib_time, onupdate=get_wib_time)
@@ -67,6 +68,10 @@ def init_db(db_url="sqlite:///data/trading.db"):
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN strategy VARCHAR DEFAULT 'MA Crossover'"))
             except Exception as e:
                 print(f"Migrasi Strategy dilewati: {e}")
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN buy_amount FLOAT DEFAULT 20000.0"))
+            except Exception as e:
+                print(f"Migrasi Buy Amount dilewati: {e}")
             try:
                 conn.commit()
             except Exception:
