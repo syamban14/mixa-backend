@@ -28,9 +28,7 @@ def main():
     BUY_AMOUNT_IDR = float(os.getenv('BUY_AMOUNT_IDR', 50000))
     DRY_RUN = os.getenv('DRY_RUN', 'True').lower() in ('true', '1', 't')
     
-    # Konfigurasi Risk Management
-    STOP_LOSS_PCT = float(os.getenv('STOP_LOSS_PCT', 5.0))
-    TAKE_PROFIT_PCT = float(os.getenv('TAKE_PROFIT_PCT', 10.0))
+    # Konfigurasi Anti-Spam
     COOLDOWN_HOURS = float(os.getenv('COOLDOWN_HOURS', 2.0))
     
     TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -77,6 +75,16 @@ def main():
                 koin_utama = symbol_indodax.split('/')[0] # 'BTC'
                 api_symbol = symbol_indodax.replace('/', '') # 'BTCIDR'
                 
+                # Ambil State & Konfigurasi dari Database (TP, SL, Strategy)
+                state = db_session.query(BotState).filter_by(symbol=symbol_indodax).first()
+                if not state:
+                    state = BotState(symbol=symbol_indodax)
+                    db_session.add(state)
+                    db_session.flush() # Mendapatkan ID tanpa commit
+                    
+                coin_tp_pct = state.take_profit_pct
+                coin_sl_pct = state.stop_loss_pct
+                
                 logging.info(f"[{symbol_indodax}] Mengambil grafik dari API Rahasia Indodax...")
                 df = indodax_executor.fetch_hidden_ohlcv(api_symbol, tf="15", limit=200)
                 
@@ -92,11 +100,11 @@ def main():
                 entry_price = entry_prices[symbol_indodax]
                 if entry_price > 0:
                     pnl_pct = ((current_price_idr - entry_price) / entry_price) * 100
-                    if pnl_pct <= -STOP_LOSS_PCT:
-                        logging.warning(f"[{symbol_indodax}] STOP LOSS TERKENA! Rugi: {pnl_pct:.2f}%")
+                    if pnl_pct <= -coin_sl_pct:
+                        logging.warning(f"[{symbol_indodax}] STOP LOSS TERKENA! Rugi: {pnl_pct:.2f}% (Batas: -{coin_sl_pct}%)")
                         signal = "SELL"
-                    elif pnl_pct >= TAKE_PROFIT_PCT:
-                        logging.info(f"[{symbol_indodax}] TAKE PROFIT TERCAPAI! Untung: {pnl_pct:.2f}%")
+                    elif pnl_pct >= coin_tp_pct:
+                        logging.info(f"[{symbol_indodax}] TAKE PROFIT TERCAPAI! Untung: {pnl_pct:.2f}% (Target: +{coin_tp_pct}%)")
                         signal = "SELL"
                 
                 # ==== COOLDOWN LOGIC ====
@@ -180,12 +188,7 @@ def main():
                 df_history = df_history.assign(timestamp=df_history['timestamp'].astype(str))
                 chart_data_json = df_history.to_json(orient='records')
                 
-                # Simpan State ke Tabel BotState
-                state = db_session.query(BotState).filter_by(symbol=symbol_indodax).first()
-                if not state:
-                    state = BotState(symbol=symbol_indodax)
-                    db_session.add(state)
-                    
+                # Simpan update State ke Tabel BotState (Objek state sudah diambil di awal loop)
                 state.current_price = current_price_idr
                 state.signal = signal
                 state.mode = status_mode

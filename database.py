@@ -18,6 +18,9 @@ class BotState(Base):
     mode = Column(String)
     balances = Column(String) # Disimpan dalam format JSON string
     entry_price = Column(Float)
+    take_profit_pct = Column(Float, default=10.0)
+    stop_loss_pct = Column(Float, default=5.0)
+    strategy = Column(String, default='MA Crossover')
     mixa_insight = Column(String)
     chart_data = Column(String) # Disimpan dalam format JSON string (50 Lilin Terakhir)
     last_update = Column(DateTime, default=get_wib_time, onupdate=get_wib_time)
@@ -47,5 +50,16 @@ def init_db(db_url="sqlite:///data/trading.db"):
     
     engine = create_engine(url, connect_args=connect_args, echo=False)
     Base.metadata.create_all(engine)
+    
+    # Auto-Migration untuk SQLite (Jika update versi)
+    if url.startswith("sqlite"):
+        try:
+            with engine.connect() as conn:
+                conn.execute("ALTER TABLE bot_state ADD COLUMN take_profit_pct FLOAT DEFAULT 10.0")
+                conn.execute("ALTER TABLE bot_state ADD COLUMN stop_loss_pct FLOAT DEFAULT 5.0")
+                conn.execute("ALTER TABLE bot_state ADD COLUMN strategy VARCHAR DEFAULT 'MA Crossover'")
+        except Exception:
+            pass # Abaikan jika kolom sudah ada
+            
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return SessionLocal

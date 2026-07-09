@@ -38,6 +38,9 @@ def get_bot_status():
                 "mode": state.mode,
                 "balances": json.loads(state.balances) if state.balances else {},
                 "entry_price": state.entry_price,
+                "take_profit_pct": state.take_profit_pct,
+                "stop_loss_pct": state.stop_loss_pct,
+                "strategy": state.strategy,
                 "mixa_insight": state.mixa_insight,
                 "last_update": state.last_update.isoformat() if state.last_update else None
             })
@@ -120,5 +123,28 @@ def update_config(data: ConfigUpdate):
             
         db.commit()
         return {"message": "Configuration updated successfully", "gemini_model": data.gemini_model, "initial_balance": data.initial_balance}
+    finally:
+        db.close()
+
+class BotConfigUpdate(BaseModel):
+    take_profit_pct: float
+    stop_loss_pct: float
+    strategy: str
+
+@app.post("/api/bot-config/{symbol_path:path}")
+def update_bot_config(symbol_path: str, config: BotConfigUpdate):
+    """Memperbarui pengaturan risiko (TP/SL) dan Strategi untuk koin tertentu."""
+    db = Session()
+    try:
+        state = db.query(BotState).filter_by(symbol=symbol_path).first()
+        if not state:
+            return {"error": "Coin not found"}
+            
+        state.take_profit_pct = config.take_profit_pct
+        state.stop_loss_pct = config.stop_loss_pct
+        state.strategy = config.strategy
+        
+        db.commit()
+        return {"message": f"Configuration for {symbol_path} updated successfully"}
     finally:
         db.close()
