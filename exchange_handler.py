@@ -109,7 +109,13 @@ class IndodaxHandler:
             # API Indodax tidak mendukung Market Order murni. 
             # Kita gunakan Limit Order dengan harga beli +1% agar langsung Match (Pseudo-Market)
             buy_price = current_price * 1.01 
-            order = self.exchange.create_limit_buy_order(symbol, amount_base, buy_price)
+            
+            # API v2 fix: sertakan quote_quantity di params
+            params = {
+                "quote_quantity": amount_idr,
+                "base_quantity": amount_base
+            }
+            order = self.exchange.create_limit_buy_order(symbol, amount_base, buy_price, params=params)
             logging.info(f"BUY Order Indodax BERHASIL: {order}")
             return order
         except Exception as e:
@@ -126,7 +132,14 @@ class IndodaxHandler:
             current_price = self.get_current_price(symbol)
             # Limit Order dengan harga jual -1% agar langsung Match (Pseudo-Market)
             sell_price = current_price * 0.99
-            order = self.exchange.create_limit_sell_order(symbol, amount_base, sell_price)
+            
+            # API v2 fix: sertakan quote_quantity di params
+            quote_qty = amount_base * sell_price
+            params = {
+                "quote_quantity": quote_qty,
+                "base_quantity": amount_base
+            }
+            order = self.exchange.create_limit_sell_order(symbol, amount_base, sell_price, params=params)
             logging.info(f"SELL Order Indodax BERHASIL: {order}")
             return order
         except Exception as e:
