@@ -21,9 +21,6 @@ def main():
     API_KEY = os.getenv('INDODAX_API_KEY')
     SECRET_KEY = os.getenv('INDODAX_SECRET_KEY')
     
-    trading_pairs_env = os.getenv('TRADING_PAIRS', 'BTC/IDR,ETH/IDR')
-    TARGET_COINS = [p.strip() for p in trading_pairs_env.split(',')]
-    
     DRY_RUN = os.getenv('DRY_RUN', 'True').lower() in ('true', '1', 't')
     
     # Konfigurasi Anti-Spam
@@ -45,22 +42,38 @@ def main():
     
     status_mode = 'SIMULASI (DRY RUN)' if DRY_RUN else 'RIIL (UANG ASLI)'
     logging.info(f"Bot Multi-Koin dimulai. Mode: {status_mode}")
-    logging.info(f"Target Pantauan: {', '.join(TARGET_COINS)}")
     
-    notifier.send_message(f"🚀 **Bot Multi-Koin Aktif**\nTarget: {', '.join(TARGET_COINS)}\nMode: {status_mode}\nDatabase: SQLite Aktif")
+    # === SEEDING DEFAULT COINS ===
+    ALL_SUPPORTED_COINS = ["BTC/IDR", "ETH/IDR", "SOL/IDR", "USDT/IDR", "XRP/IDR", "SHIB/IDR", "PEPE/IDR", "XLM/IDR", "TRX/IDR"]
+    try:
+        db_session_init = Session()
+        for symbol in ALL_SUPPORTED_COINS:
+            state = db_session_init.query(BotState).filter_by(symbol=symbol).first()
+            if not state:
+                state = BotState(symbol=symbol, is_active=1)
+                db_session_init.add(state)
+        db_session_init.commit()
+    except Exception as e:
+        logging.error(f"Gagal seeding koin awal: {e}")
+    finally:
+        db_session_init.close()
+        
+    notifier.send_message(f"🚀 **Bot Multi-Koin Aktif**\nMode: {status_mode}\nSistem Koin Dinamis Aktif")
 
     # === MEMORI SEMENTARA (RAM) ===
     # Karena ada banyak koin, kita simpan status masing-masing koin di Dictionary memori
     # untuk mengecek apakah sinyal berubah (mencegah spam Beli/Jual)
-    last_signals = {coin: "HOLD" for coin in TARGET_COINS}
+    last_signals = {coin: "HOLD" for coin in ALL_SUPPORTED_COINS}
+    last_sell_times = {coin: 0.0 for coin in ALL_SUPPORTED_COINS}
+    
     # Staggering: Koin 1 langsung panggil AI, Koin 2 tunggu 3 menit, Koin 3 tunggu 6 menit, dst.
     # Waktu sekarang dikurangi 900 detik (15 mnt) agar koin pertama langsung eksekusi,
     # ditambah jeda 180 detik (3 mnt) per koin berikutnya.
     current_t = time.time()
-    last_mixa_times = {coin: current_t - 900 + (i * 180) for i, coin in enumerate(TARGET_COINS)}
+    last_mixa_times = {coin: current_t - 900 + (i * 180) for i, coin in enumerate(ALL_SUPPORTED_COINS)}
 
     # Memuat memori sementara Harga Beli (Entry Prices) dari Database agar tidak hilang saat restart
-    entry_prices = {coin: 0.0 for coin in TARGET_COINS}
+    entry_prices = {coin: 0.0 for coin in ALL_SUPPORTED_COINS}
     try:
         db_session_init = Session()
         states = db_session_init.query(BotState).all()
@@ -76,17 +89,25 @@ def main():
         try:
             db_session = Session()
             
-            # Putaran untuk setiap koin
-            for symbol_indodax in TARGET_COINS:
+            # Ambil HANYA koin yang status is_active = 1 dari Database (Dinamis)
+            active_states = db_session.query(BotState).filter_by(is_active=1).all()
+            active_coins = [state.symbol for state in active_states]
+            
+            if not active_coins:
+                logging.info("Tidak ada koin aktif yang dipantau saat ini. Menunggu 10 detik...")
+                time.sleep(10)
+                db_session.close()
+                continue
+                
+            logging.info(f"--- Memulai Putaran untuk {len(active_coins)} Koin Aktif ---")
+            
+            # Putaran untuk setiap koin aktif
+            for symbol_indodax in active_coins:
                 koin_utama = symbol_indodax.split('/')[0] # 'BTC'
                 api_symbol = symbol_indodax.replace('/', '') # 'BTCIDR'
                 
                 # Ambil State & Konfigurasi dari Database (TP, SL, Strategy)
                 state = db_session.query(BotState).filter_by(symbol=symbol_indodax).first()
-                if not state:
-                    state = BotState(symbol=symbol_indodax)
-                    db_session.add(state)
-                    db_session.flush() # Mendapatkan ID tanpa commit
                     
                 coin_tp_pct = state.take_profit_pct
                 coin_sl_pct = state.stop_loss_pct

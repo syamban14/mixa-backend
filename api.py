@@ -42,6 +42,7 @@ def get_bot_status():
                 "stop_loss_pct": state.stop_loss_pct,
                 "strategy": state.strategy,
                 "buy_amount": state.buy_amount,
+                "is_active": bool(state.is_active),
                 "mixa_insight": state.mixa_insight,
                 "last_update": state.last_update.isoformat() if state.last_update else None
             })
@@ -132,6 +133,7 @@ class BotConfigUpdate(BaseModel):
     stop_loss_pct: float
     strategy: str
     buy_amount: float
+    is_active: bool
 
 @app.post("/api/bot-config/{symbol_path:path}")
 def update_bot_config(symbol_path: str, config: BotConfigUpdate):
@@ -146,6 +148,7 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate):
         state.stop_loss_pct = config.stop_loss_pct
         state.strategy = config.strategy
         state.buy_amount = config.buy_amount
+        state.is_active = 1 if config.is_active else 0
         
         db.commit()
         return {"message": f"Configuration for {symbol_path} updated successfully"}
