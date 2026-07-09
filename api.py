@@ -130,11 +130,12 @@ def update_config(data: ConfigUpdate):
         db.close()
 
 class BotConfigUpdate(BaseModel):
-    take_profit_pct: float
-    stop_loss_pct: float
-    strategy: str
-    buy_amount: float
-    is_active: bool
+    take_profit_pct: Optional[float] = None
+    stop_loss_pct: Optional[float] = None
+    strategy: Optional[str] = None
+    buy_amount: Optional[float] = None
+    is_active: Optional[bool] = None
+    entry_price: Optional[float] = None
 
 @app.post("/api/bot-config/{symbol_path:path}")
 def update_bot_config(symbol_path: str, config: BotConfigUpdate):
@@ -145,12 +146,19 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate):
         if not state:
             return {"error": "Coin not found"}
             
-        state.take_profit_pct = config.take_profit_pct
-        state.stop_loss_pct = config.stop_loss_pct
-        state.strategy = config.strategy
-        state.buy_amount = config.buy_amount
-        state.is_active = 1 if config.is_active else 0
-        
+        if config.take_profit_pct is not None:
+            state.take_profit_pct = config.take_profit_pct
+        if config.stop_loss_pct is not None:
+            state.stop_loss_pct = config.stop_loss_pct
+        if config.strategy is not None:
+            state.strategy = config.strategy
+        if config.buy_amount is not None:
+            state.buy_amount = config.buy_amount
+        if config.is_active is not None:
+            state.is_active = 1 if config.is_active else 0
+        if config.entry_price is not None:
+            state.entry_price = config.entry_price
+            
         db.commit()
         return {"message": f"Configuration for {symbol_path} updated successfully"}
     finally:
