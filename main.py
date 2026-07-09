@@ -114,37 +114,53 @@ def main():
                     
                     if idr_bal >= BUY_AMOUNT_IDR or DRY_RUN:
                         order = indodax_executor.place_buy_order(symbol_indodax, BUY_AMOUNT_IDR)
-                        msg = f"🟢 **SINYAL BELI!**\nTarget: {symbol_indodax}\nNominal: Rp {BUY_AMOUNT_IDR:,}"
-                        notifier.send_message(msg)
-                        last_signals[symbol_indodax] = "BUY"
-                        entry_prices[symbol_indodax] = current_price_idr
                         
-                        # Catat ke Tabel TradeHistory (Tercatat abadi di Database)
-                        trade = TradeHistory(
-                            symbol=symbol_indodax, action="BUY", price=current_price_idr, nominal=f"Rp {BUY_AMOUNT_IDR:,}"
-                        )
-                        db_session.add(trade)
+                        if order: # Validasi Ganda: Order benar-benar sukses di Indodax
+                            msg = f"🟢 **SINYAL BELI!**\nTarget: {symbol_indodax}\nNominal: Rp {BUY_AMOUNT_IDR:,}"
+                            notifier.send_message(msg)
+                            last_signals[symbol_indodax] = "BUY"
+                            entry_prices[symbol_indodax] = current_price_idr
+                            
+                            # Catat ke Tabel TradeHistory (Tercatat abadi di Database)
+                            trade = TradeHistory(
+                                symbol=symbol_indodax, action="BUY", price=current_price_idr, nominal=f"Rp {BUY_AMOUNT_IDR:,}"
+                            )
+                            db_session.add(trade)
+                        else:
+                            logging.error(f"[{symbol_indodax}] API Indodax menolak Beli. Mencoba lagi putaran berikutnya.")
+                            # KITA TIDAK mengupdate last_signals, agar bot mengulang coba beli di menit depan
                     else:
                         logging.warning(f"[{symbol_indodax}] Saldo IDR tidak cukup.")
+                        last_signals[symbol_indodax] = "BUY" # Saldo habis, bungkam agar tidak spam Indodax
                         
                 elif signal == "SELL" and last_signals[symbol_indodax] != "SELL":
                     balances = indodax_executor.get_balance()
                     asset_bal = balances.get(koin_utama, 0)
+                    estimated_value_idr = asset_bal * current_price_idr
                     
-                    if asset_bal > 0 or DRY_RUN:
+                    # Filter Receh: Batas aman Rp 15.000
+                    if estimated_value_idr >= 15000 or DRY_RUN:
                         amount_to_sell = 0.001 if DRY_RUN else asset_bal 
                         order = indodax_executor.place_sell_order(symbol_indodax, amount_to_sell)
-                        msg = f"🔴 **SINYAL JUAL!**\nTarget: {symbol_indodax}\nKoin Dijual: {amount_to_sell} {koin_utama}"
-                        notifier.send_message(msg)
-                        last_signals[symbol_indodax] = "SELL"
-                        entry_prices[symbol_indodax] = 0.0
-                        last_sell_times[symbol_indodax] = time.time()
                         
-                        # Catat ke Tabel TradeHistory
-                        trade = TradeHistory(
-                            symbol=symbol_indodax, action="SELL", price=current_price_idr, nominal=f"{amount_to_sell} {koin_utama}"
-                        )
-                        db_session.add(trade)
+                        if order: # Validasi Ganda: Order benar-benar sukses di Indodax
+                            msg = f"🔴 **SINYAL JUAL!**\nTarget: {symbol_indodax}\nKoin Dijual: {amount_to_sell} {koin_utama}"
+                            notifier.send_message(msg)
+                            last_signals[symbol_indodax] = "SELL"
+                            entry_prices[symbol_indodax] = 0.0
+                            last_sell_times[symbol_indodax] = time.time()
+                            
+                            # Catat ke Tabel TradeHistory
+                            trade = TradeHistory(
+                                symbol=symbol_indodax, action="SELL", price=current_price_idr, nominal=f"{amount_to_sell} {koin_utama}"
+                            )
+                            db_session.add(trade)
+                        else:
+                            logging.error(f"[{symbol_indodax}] API Indodax menolak Jual. Koin aman, mencoba lagi nanti.")
+                            # KITA TIDAK mengupdate last_signals, agar bot ngotot jual lagi di menit depan (Smart Retry)
+                    else:
+                        logging.warning(f"[{symbol_indodax}] Sisa saldo receh (Di bawah Rp 15.000). Penjualan diabaikan.")
+                        last_signals[symbol_indodax] = "SELL" # Saldo receh, bungkam agar tidak spam error Indodax
                 
                 # Panggil MIXA AI setiap 15 menit per koin
                 current_time = time.time()
