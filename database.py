@@ -41,6 +41,7 @@ class TradeHistory(Base):
     action = Column(String) # BUY atau SELL
     price = Column(Float)
     nominal = Column(String)
+    pnl_pct = Column(Float, nullable=True) # Persentase profit/rugi jika action == SELL
     timestamp = Column(DateTime, default=get_wib_time)
 
 def init_db(db_url="sqlite:///data/trading.db"):
@@ -77,6 +78,10 @@ def init_db(db_url="sqlite:///data/trading.db"):
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN is_active INTEGER DEFAULT 1"))
             except Exception as e:
                 print(f"Migrasi is_active dilewati: {e}")
+            try:
+                conn.execute(text("ALTER TABLE trade_history ADD COLUMN pnl_pct FLOAT NULL"))
+            except Exception as e:
+                print(f"Migrasi pnl_pct dilewati: {e}")
             try:
                 conn.commit()
             except Exception:

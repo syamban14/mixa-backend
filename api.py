@@ -64,6 +64,7 @@ def get_trade_history(symbol_path: str):
                 "action": h.action,
                 "price": h.price,
                 "nominal": h.nominal,
+                "pnl_pct": h.pnl_pct,
                 "timestamp": h.timestamp.isoformat() if h.timestamp else None
             })
         return result

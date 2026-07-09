@@ -44,7 +44,7 @@ def main():
     logging.info(f"Bot Multi-Koin dimulai. Mode: {status_mode}")
     
     # === SEEDING DEFAULT COINS ===
-    ALL_SUPPORTED_COINS = ["BTC/IDR", "ETH/IDR", "SOL/IDR", "USDT/IDR", "XRP/IDR", "SHIB/IDR", "PEPE/IDR", "XLM/IDR", "TRX/IDR"]
+    ALL_SUPPORTED_COINS = ["BTC/IDR", "ETH/IDR", "SOL/IDR", "USDT/IDR", "XRP/IDR", "LRC/IDR"]
     try:
         db_session_init = Session()
         for symbol in ALL_SUPPORTED_COINS:
@@ -183,6 +183,12 @@ def main():
                         order = indodax_executor.place_sell_order(symbol_indodax, amount_to_sell)
                         
                         if order: # Validasi Ganda: Order benar-benar sukses di Indodax
+                            # HITUNG PnL
+                            current_entry = entry_prices[symbol_indodax]
+                            realized_pnl = None
+                            if current_entry > 0:
+                                realized_pnl = ((current_price_idr - current_entry) / current_entry) * 100
+                                
                             msg = f"🔴 **SINYAL JUAL!**\nTarget: {symbol_indodax}\nKoin Dijual: {amount_to_sell} {koin_utama}"
                             notifier.send_message(msg)
                             last_signals[symbol_indodax] = "SELL"
@@ -191,7 +197,7 @@ def main():
                             
                             # Catat ke Tabel TradeHistory
                             trade = TradeHistory(
-                                symbol=symbol_indodax, action="SELL", price=current_price_idr, nominal=f"{amount_to_sell} {koin_utama}"
+                                symbol=symbol_indodax, action="SELL", price=current_price_idr, nominal=f"{amount_to_sell} {koin_utama}", pnl_pct=realized_pnl
                             )
                             db_session.add(trade)
                         else:
