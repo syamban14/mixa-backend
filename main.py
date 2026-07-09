@@ -47,6 +47,15 @@ def main():
     ALL_SUPPORTED_COINS = ["BTC/IDR", "ETH/IDR", "SOL/IDR", "USDT/IDR", "XRP/IDR", "LRC/IDR"]
     try:
         db_session_init = Session()
+        
+        # 1. Hapus koin usang dari Database agar tidak muncul di Frontend
+        existing_states = db_session_init.query(BotState).all()
+        for state in existing_states:
+            if state.symbol not in ALL_SUPPORTED_COINS:
+                logging.info(f"Menghapus koin usang dari database: {state.symbol}")
+                db_session_init.delete(state)
+                
+        # 2. Tambahkan koin baru jika belum ada
         for symbol in ALL_SUPPORTED_COINS:
             state = db_session_init.query(BotState).filter_by(symbol=symbol).first()
             if not state:
@@ -61,14 +70,11 @@ def main():
     notifier.send_message(f"🚀 **Bot Multi-Koin Aktif**\nMode: {status_mode}\nSistem Koin Dinamis Aktif")
 
     # === MEMORI SEMENTARA (RAM) ===
-    # Karena ada banyak koin, kita simpan status masing-masing koin di Dictionary memori
-    # untuk mengecek apakah sinyal berubah (mencegah spam Beli/Jual)
+    # Kita menggunakan ALL_SUPPORTED_COINS karena kita sudah memastikan Database sinkron
     last_signals = {coin: "HOLD" for coin in ALL_SUPPORTED_COINS}
     last_sell_times = {coin: 0.0 for coin in ALL_SUPPORTED_COINS}
     
     # Staggering: Koin 1 langsung panggil AI, Koin 2 tunggu 3 menit, Koin 3 tunggu 6 menit, dst.
-    # Waktu sekarang dikurangi 900 detik (15 mnt) agar koin pertama langsung eksekusi,
-    # ditambah jeda 180 detik (3 mnt) per koin berikutnya.
     current_t = time.time()
     last_mixa_times = {coin: current_t - 900 + (i * 180) for i, coin in enumerate(ALL_SUPPORTED_COINS)}
 
@@ -106,12 +112,22 @@ def main():
                 koin_utama = symbol_indodax.split('/')[0] # 'BTC'
                 api_symbol = symbol_indodax.replace('/', '') # 'BTCIDR'
                 
+                
                 # Ambil State & Konfigurasi dari Database (TP, SL, Strategy)
                 state = db_session.query(BotState).filter_by(symbol=symbol_indodax).first()
+                if not state:
+                    continue
                     
                 coin_tp_pct = state.take_profit_pct
                 coin_sl_pct = state.stop_loss_pct
                 coin_buy_amount = state.buy_amount
+                
+                # Pastikan memori diinisialisasi untuk koin ini (mencegah KeyError)
+                if symbol_indodax not in last_signals:
+                    last_signals[symbol_indodax] = "HOLD"
+                    last_sell_times[symbol_indodax] = 0.0
+                    last_mixa_times[symbol_indodax] = time.time() - 900
+                    entry_prices[symbol_indodax] = state.entry_price or 0.0
                 
                 logging.info(f"[{symbol_indodax}] Mengambil grafik dari API Rahasia Indodax...")
                 df = indodax_executor.fetch_hidden_ohlcv(api_symbol, tf="15", limit=200)
