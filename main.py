@@ -250,14 +250,18 @@ def main():
                 asset_bal = balances.get(koin_utama, 0)
                 
                 # Sinkronisasi Cerdas: Jika koin sudah tidak ada di Indodax (dijual manual), reset harga beli
+                # BUGFIX: Cek ke API Indodax apakah masih ada antrean beli (pending order). Jika ada, JANGAN hapus ingatan.
+                # BUGFIX: Turunkan batas dari 11000 ke 5000, karena pembelian minimum 10.000 (setelah dipotong fee) akan menjadi ~9.970.
                 estimated_value_idr = asset_bal * current_price_idr
-                if estimated_value_idr < 11000 and (state.entry_price or 0.0) > 0:
-                    logging.info(f"[{symbol_indodax}] Saldo koin kosong/receh, menghapus Harga Beli dari memori.")
-                    state.entry_price = 0.0
-                    state.highest_price_since_buy = 0.0
-                    state.last_buy_time = 0.0
-                    state.total_idr_invested = 0.0
-                    state.dca_completed_orders = 0
+                
+                if estimated_value_idr < 5000 and (state.entry_price or 0.0) > 0:
+                    if not indodax_executor.has_open_orders(symbol_indodax):
+                        logging.info(f"[{symbol_indodax}] Saldo koin kosong & tidak ada pending order, menghapus Harga Beli dari memori.")
+                        state.entry_price = 0.0
+                        state.highest_price_since_buy = 0.0
+                        state.last_buy_time = 0.0
+                        state.total_idr_invested = 0.0
+                        state.dca_completed_orders = 0
 
                 if signal == "BUY" and last_signals[symbol_indodax] != "BUY":
                     if idr_bal >= coin_buy_amount or DRY_RUN:

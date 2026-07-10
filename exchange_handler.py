@@ -176,3 +176,16 @@ class IndodaxHandler:
         except Exception as e:
             logging.error(f"Order Jual Indodax GAGAL: {e}")
             return {}
+
+    def has_open_orders(self, symbol: str) -> bool:
+        """Mengecek apakah koin ini memiliki order aktif (pending) di pasar."""
+        if self.dry_run:
+            return False
+        try:
+            open_orders = self.exchange.fetch_open_orders(symbol)
+            return len(open_orders) > 0
+        except Exception as e:
+            logging.error(f"Gagal mengecek open orders untuk {symbol}: {e}")
+            # Jika gagal mengecek (misal error API/Rate Limit), kembalikan True sebagai tindakan pencegahan (failsafe)
+            # agar bot tidak langsung menghapus memori harga beli.
+            return True
