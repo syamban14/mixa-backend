@@ -44,7 +44,7 @@ def main():
     logging.info(f"Bot Multi-Koin dimulai. Mode: {status_mode}")
     
     # === SEEDING DEFAULT COINS ===
-    ALL_SUPPORTED_COINS = ["BTC/IDR", "ETH/IDR", "SOL/IDR", "USDT/IDR", "XRP/IDR", "LRC/IDR"]
+    ALL_SUPPORTED_COINS = ["BTC/IDR", "ETH/IDR", "SOL/IDR", "USDT/IDR", "XRP/IDR", "LRC/IDR", "DOGE/IDR", "PEPE/IDR"]
     try:
         db_session_init = Session()
         
