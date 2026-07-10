@@ -49,6 +49,12 @@ def get_bot_status():
                 "use_dynamic_roi": bool(state.use_dynamic_roi),
                 "dynamic_roi_config": state.dynamic_roi_config,
                 "last_buy_time": state.last_buy_time,
+                "use_dca": bool(state.use_dca),
+                "dca_max_orders": state.dca_max_orders,
+                "dca_step_pct": state.dca_step_pct,
+                "dca_volume_scale": state.dca_volume_scale,
+                "dca_completed_orders": state.dca_completed_orders,
+                "total_idr_invested": state.total_idr_invested,
                 "highest_price_since_buy": state.highest_price_since_buy,
                 "mixa_insight": state.mixa_insight,
                 "last_update": state.last_update.isoformat() if state.last_update else None
@@ -149,6 +155,12 @@ class BotConfigUpdate(BaseModel):
     use_dynamic_roi: Optional[bool] = None
     dynamic_roi_config: Optional[str] = None
     last_buy_time: Optional[float] = None
+    use_dca: Optional[bool] = None
+    dca_max_orders: Optional[int] = None
+    dca_step_pct: Optional[float] = None
+    dca_volume_scale: Optional[float] = None
+    dca_completed_orders: Optional[int] = None
+    total_idr_invested: Optional[float] = None
 
 @app.post("/api/bot-config/{symbol_path:path}")
 def update_bot_config(symbol_path: str, config: BotConfigUpdate):
@@ -171,6 +183,9 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate):
             state.is_active = 1 if config.is_active else 0
         if config.entry_price is not None:
             state.entry_price = config.entry_price
+            # Reset IDR Invested agar main.py bisa menghitung ulang (jika manual entry price)
+            state.total_idr_invested = 0.0
+            
             # Auto-set last_buy_time if entry_price is set manually and last_buy_time is 0
             if config.entry_price > 0 and (state.last_buy_time or 0.0) == 0.0:
                 import time
@@ -178,6 +193,7 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate):
             elif config.entry_price == 0:
                 state.last_buy_time = 0.0
                 state.highest_price_since_buy = 0.0
+                state.dca_completed_orders = 0
         if config.use_trailing_stop is not None:
             state.use_trailing_stop = 1 if config.use_trailing_stop else 0
         if config.trailing_stop_pct is not None:
@@ -190,6 +206,18 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate):
             state.dynamic_roi_config = config.dynamic_roi_config
         if config.last_buy_time is not None:
             state.last_buy_time = config.last_buy_time
+        if config.use_dca is not None:
+            state.use_dca = 1 if config.use_dca else 0
+        if config.dca_max_orders is not None:
+            state.dca_max_orders = config.dca_max_orders
+        if config.dca_step_pct is not None:
+            state.dca_step_pct = config.dca_step_pct
+        if config.dca_volume_scale is not None:
+            state.dca_volume_scale = config.dca_volume_scale
+        if config.dca_completed_orders is not None:
+            state.dca_completed_orders = config.dca_completed_orders
+        if config.total_idr_invested is not None:
+            state.total_idr_invested = config.total_idr_invested
             
         db.commit()
         return {"message": f"Configuration for {symbol_path} updated successfully"}

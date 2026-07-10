@@ -6,7 +6,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from exchange_handler import IndodaxHandler
-from strategy import MovingAverageStrategy
+from strategy import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy
 from notifier import TelegramNotifier
 from mixa_ai import MixaAI
 from database import init_db, BotState, TradeHistory, AppConfig
@@ -39,9 +39,6 @@ def main():
     
     # Inisialisasi Database (SQLite Engine)
     Session = init_db()
-    
-    # Inisialisasi Strategi (Moving Average)
-    strategy = MovingAverageStrategy(fast_period=10, slow_period=50)
     
     status_mode = 'SIMULASI (DRY RUN)' if DRY_RUN else 'RIIL (UANG ASLI)'
     logging.info(f"Bot Multi-Koin dimulai. Mode: {status_mode}")
@@ -130,9 +127,27 @@ def main():
                     continue
                     
                 current_price_idr = float(df.iloc[-1]['close'])
+                
+                # ==== DYNAMIC STRATEGY ROUTING ====
+                strategy_name = state.strategy or "MA Crossover"
+                if strategy_name == "RSI Breakout":
+                    strategy = RSIBreakoutStrategy()
+                elif strategy_name == "Bollinger Bands":
+                    strategy = BollingerBandsStrategy()
+                else:
+                    strategy = MovingAverageStrategy(fast_period=10, slow_period=50)
+                    
                 signal = strategy.analyze(df)
                 
                 # ==== RISK MANAGEMENT (TP/SL) ====
+                # Sinkronisasi Total Investasi (Berguna jika pengguna mengisi Manual Entry Price di UI)
+                if (state.entry_price or 0.0) > 0 and (state.total_idr_invested or 0.0) == 0.0:
+                    balances = indodax_executor.get_balance()
+                    asset_bal_sync = balances.get(koin_utama, 0)
+                    if asset_bal_sync > 0:
+                        state.total_idr_invested = asset_bal_sync * state.entry_price
+                        logging.info(f"[{symbol_indodax}] Sinkronisasi modal awal DCA: Rp {state.total_idr_invested:,.0f}")
+                        
                 entry_price = state.entry_price or 0.0
                 if entry_price > 0:
                     # Trailing Stop: Update highest price
@@ -161,6 +176,47 @@ def main():
                                 signal = "SELL"
                         except Exception as e:
                             logging.error(f"[{symbol_indodax}] Gagal memproses Dynamic ROI: {e}")
+                    
+                    # 1.5 Cek DCA / Safety Orders
+                    if signal != "SELL" and state.use_dca:
+                        dca_count = state.dca_completed_orders or 0
+                        max_orders = state.dca_max_orders or 3
+                        if dca_count < max_orders:
+                            step_pct = state.dca_step_pct or 3.0
+                            drop_threshold = step_pct * (dca_count + 1)
+                            
+                            if pnl_pct <= -drop_threshold:
+                                volume_scale = state.dca_volume_scale or 1.0
+                                dca_amount = coin_buy_amount * (volume_scale ** dca_count)
+                                
+                                balances_dca = indodax_executor.get_balance()
+                                idr_bal_dca = balances_dca.get('IDR', 0)
+                                
+                                if idr_bal_dca >= dca_amount or DRY_RUN:
+                                    logging.info(f"[{symbol_indodax}] 🚨 Harga turun {-pnl_pct:.2f}%. Memicu DCA #{dca_count+1} sebesar Rp {dca_amount:,.0f}!")
+                                    order = indodax_executor.place_buy_order(symbol_indodax, dca_amount)
+                                    if order:
+                                        msg = f"🛒 **DCA / SAFETY ORDER!**\nTarget: {symbol_indodax}\nTahap: #{dca_count+1}/{max_orders}\nNominal: Rp {dca_amount:,.0f}\nHarga Beli: Rp {current_price_idr:,.0f}"
+                                        notifier.send_message(msg)
+                                        
+                                        state.total_idr_invested = (state.total_idr_invested or 0.0) + dca_amount
+                                        state.dca_completed_orders = dca_count + 1
+                                        
+                                        # Kalkulasi Average Price Akurat
+                                        time.sleep(2) # Tunggu Indodax settle balance
+                                        new_balances = indodax_executor.get_balance()
+                                        new_asset_bal = new_balances.get(koin_utama, 0)
+                                        if new_asset_bal > 0:
+                                            new_avg_price = state.total_idr_invested / new_asset_bal
+                                            logging.info(f"[{symbol_indodax}] Average Price turun dari Rp {entry_price:,.0f} menjadi Rp {new_avg_price:,.0f}")
+                                            state.entry_price = new_avg_price
+                                            state.highest_price_since_buy = new_avg_price
+                                            
+                                        # Catat ke history
+                                        db_session.add(TradeHistory(symbol=symbol_indodax, action=f"BUY (DCA {dca_count+1})", price=current_price_idr, nominal=f"Rp {dca_amount:,.0f}"))
+                                        db_session.commit()
+                                else:
+                                    logging.warning(f"[{symbol_indodax}] DCA #{dca_count+1} gagal! Saldo IDR tidak cukup (Butuh: {dca_amount:,.0f}, Tersedia: {idr_bal_dca:,.0f})")
                     
                     # 2. Cek Trailing Stop Loss (jika aktif)
                     if signal != "SELL" and state.use_trailing_stop:
@@ -200,6 +256,8 @@ def main():
                     state.entry_price = 0.0
                     state.highest_price_since_buy = 0.0
                     state.last_buy_time = 0.0
+                    state.total_idr_invested = 0.0
+                    state.dca_completed_orders = 0
 
                 if signal == "BUY" and last_signals[symbol_indodax] != "BUY":
                     if idr_bal >= coin_buy_amount or DRY_RUN:
@@ -212,6 +270,8 @@ def main():
                             state.entry_price = current_price_idr
                             state.highest_price_since_buy = current_price_idr
                             state.last_buy_time = time.time()
+                            state.total_idr_invested = coin_buy_amount
+                            state.dca_completed_orders = 0
                             
                             # Catat ke Tabel TradeHistory (Tercatat abadi di Database)
                             trade = TradeHistory(
@@ -244,6 +304,8 @@ def main():
                             state.entry_price = 0.0
                             state.highest_price_since_buy = 0.0
                             state.last_buy_time = 0.0
+                            state.total_idr_invested = 0.0
+                            state.dca_completed_orders = 0
                             last_sell_times[symbol_indodax] = time.time()
                             
                             # Catat ke Tabel TradeHistory

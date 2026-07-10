@@ -73,3 +73,80 @@ class HybridAIStrategy(BaseStrategy):
         
         # Untuk saat ini, teruskan sinyal teknikal secara murni
         return ta_signal
+
+class RSIBreakoutStrategy(BaseStrategy):
+    """
+    Strategi Teknikal menggunakan Relative Strength Index (RSI).
+    Beli: Jika RSI menyilang ke atas batas oversold (misal 30).
+    Jual: Jika RSI menyilang ke bawah batas overbought (misal 70).
+    """
+    def __init__(self, period: int = 14, oversold: float = 30.0, overbought: float = 70.0):
+        self.period = period
+        self.oversold = oversold
+        self.overbought = overbought
+
+    def analyze(self, df: pd.DataFrame) -> str:
+        if df.empty or len(df) < self.period + 1:
+            return "HOLD"
+            
+        df = df.copy()
+        
+        # Kalkulasi RSI murni
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=self.period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=self.period).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        
+        df = df.assign(RSI=rsi)
+        
+        last_row = df.iloc[-1]
+        prev_row = df.iloc[-2]
+        
+        # Sinyal BUY: oversold breakout (dari bawah 30 naik ke atas 30)
+        if prev_row['RSI'] <= self.oversold and last_row['RSI'] > self.oversold:
+            return "BUY"
+            
+        # Sinyal SELL: overbought breakout (dari atas 70 turun ke bawah 70)
+        elif prev_row['RSI'] >= self.overbought and last_row['RSI'] < self.overbought:
+            return "SELL"
+            
+        return "HOLD"
+
+class BollingerBandsStrategy(BaseStrategy):
+    """
+    Strategi Teknikal menggunakan Bollinger Bands.
+    Beli: Jika harga penutupan menyentuh/menyilang ke atas pita bawah (Lower Band).
+    Jual: Jika harga penutupan menyentuh/menyilang ke bawah pita atas (Upper Band).
+    """
+    def __init__(self, period: int = 20, std_dev: float = 2.0):
+        self.period = period
+        self.std_dev = std_dev
+
+    def analyze(self, df: pd.DataFrame) -> str:
+        if df.empty or len(df) < self.period:
+            return "HOLD"
+            
+        df = df.copy()
+        
+        # Kalkulasi SMA dan Standard Deviation
+        sma = df['close'].rolling(window=self.period).mean()
+        std = df['close'].rolling(window=self.period).std()
+        
+        upper_band = sma + (std * self.std_dev)
+        lower_band = sma - (std * self.std_dev)
+        
+        df = df.assign(UpperBand=upper_band, LowerBand=lower_band)
+        
+        last_row = df.iloc[-1]
+        prev_row = df.iloc[-2]
+        
+        # Sinyal BUY: Harga close menembus dari bawah ke atas Lower Band
+        if prev_row['close'] <= prev_row['LowerBand'] and last_row['close'] > last_row['LowerBand']:
+            return "BUY"
+            
+        # Sinyal SELL: Harga close menembus dari atas ke bawah Upper Band
+        elif prev_row['close'] >= prev_row['UpperBand'] and last_row['close'] < last_row['UpperBand']:
+            return "SELL"
+            
+        return "HOLD"
