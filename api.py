@@ -44,6 +44,9 @@ def get_bot_status():
                 "strategy": state.strategy,
                 "buy_amount": state.buy_amount,
                 "is_active": bool(state.is_active),
+                "use_trailing_stop": bool(state.use_trailing_stop),
+                "trailing_stop_pct": state.trailing_stop_pct,
+                "highest_price_since_buy": state.highest_price_since_buy,
                 "mixa_insight": state.mixa_insight,
                 "last_update": state.last_update.isoformat() if state.last_update else None
             })
@@ -137,6 +140,9 @@ class BotConfigUpdate(BaseModel):
     buy_amount: Optional[float] = None
     is_active: Optional[bool] = None
     entry_price: Optional[float] = None
+    use_trailing_stop: Optional[bool] = None
+    trailing_stop_pct: Optional[float] = None
+    highest_price_since_buy: Optional[float] = None
 
 @app.post("/api/bot-config/{symbol_path:path}")
 def update_bot_config(symbol_path: str, config: BotConfigUpdate):
@@ -159,6 +165,12 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate):
             state.is_active = 1 if config.is_active else 0
         if config.entry_price is not None:
             state.entry_price = config.entry_price
+        if config.use_trailing_stop is not None:
+            state.use_trailing_stop = 1 if config.use_trailing_stop else 0
+        if config.trailing_stop_pct is not None:
+            state.trailing_stop_pct = config.trailing_stop_pct
+        if config.highest_price_since_buy is not None:
+            state.highest_price_since_buy = config.highest_price_since_buy
             
         db.commit()
         return {"message": f"Configuration for {symbol_path} updated successfully"}

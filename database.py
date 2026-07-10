@@ -23,6 +23,9 @@ class BotState(Base):
     strategy = Column(String, default='MA Crossover')
     buy_amount = Column(Float, default=20000.0)
     is_active = Column(Integer, default=1) # SQLite doesn't have native BOOLEAN, use Integer 1/0
+    use_trailing_stop = Column(Integer, default=0) # 0 = False, 1 = True
+    trailing_stop_pct = Column(Float, default=2.0)
+    highest_price_since_buy = Column(Float, default=0.0)
     mixa_insight = Column(String)
     chart_data = Column(String) # Disimpan dalam format JSON string (50 Lilin Terakhir)
     last_update = Column(DateTime, default=get_wib_time, onupdate=get_wib_time)
@@ -82,6 +85,18 @@ def init_db(db_url="sqlite:///data/trading.db"):
                 conn.execute(text("ALTER TABLE trade_history ADD COLUMN pnl_pct FLOAT NULL"))
             except Exception as e:
                 print(f"Migrasi pnl_pct dilewati: {e}")
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN use_trailing_stop INTEGER DEFAULT 0"))
+            except Exception as e:
+                print(f"Migrasi use_trailing_stop dilewati: {e}")
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN trailing_stop_pct FLOAT DEFAULT 2.0"))
+            except Exception as e:
+                print(f"Migrasi trailing_stop_pct dilewati: {e}")
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN highest_price_since_buy FLOAT DEFAULT 0.0"))
+            except Exception as e:
+                print(f"Migrasi highest_price_since_buy dilewati: {e}")
             try:
                 conn.commit()
             except Exception:

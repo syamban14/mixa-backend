@@ -132,13 +132,30 @@ def main():
                 # ==== RISK MANAGEMENT (TP/SL) ====
                 entry_price = state.entry_price or 0.0
                 if entry_price > 0:
+                    # Trailing Stop: Update highest price
+                    highest_price = state.highest_price_since_buy or 0.0
+                    if current_price_idr > highest_price:
+                        state.highest_price_since_buy = current_price_idr
+                        highest_price = current_price_idr
+                        
                     pnl_pct = ((current_price_idr - entry_price) / entry_price) * 100
-                    if pnl_pct <= -coin_sl_pct:
-                        logging.warning(f"[{symbol_indodax}] STOP LOSS TERKENA! Rugi: {pnl_pct:.2f}% (Batas: -{coin_sl_pct}%)")
-                        signal = "SELL"
-                    elif pnl_pct >= coin_tp_pct:
-                        logging.info(f"[{symbol_indodax}] TAKE PROFIT TERCAPAI! Untung: {pnl_pct:.2f}% (Target: +{coin_tp_pct}%)")
-                        signal = "SELL"
+                    
+                    # Cek Trailing Stop Loss (jika aktif)
+                    if state.use_trailing_stop:
+                        if highest_price > 0:
+                            drop_pct = ((highest_price - current_price_idr) / highest_price) * 100
+                            if drop_pct >= (state.trailing_stop_pct or 2.0):
+                                logging.info(f"[{symbol_indodax}] TRAILING STOP TERKENA! Turun {drop_pct:.2f}% dari puncak. PnL: {pnl_pct:.2f}%")
+                                signal = "SELL"
+                    
+                    # Cek Fixed TP/SL (Fallback)
+                    if signal != "SELL":
+                        if pnl_pct <= -coin_sl_pct:
+                            logging.warning(f"[{symbol_indodax}] STOP LOSS TERKENA! Rugi: {pnl_pct:.2f}% (Batas: -{coin_sl_pct}%)")
+                            signal = "SELL"
+                        elif pnl_pct >= coin_tp_pct:
+                            logging.info(f"[{symbol_indodax}] TAKE PROFIT TERCAPAI! Untung: {pnl_pct:.2f}% (Target: +{coin_tp_pct}%)")
+                            signal = "SELL"
                 
                 # ==== COOLDOWN LOGIC ====
                 current_time = time.time()
@@ -158,6 +175,7 @@ def main():
                 if estimated_value_idr < 11000 and (state.entry_price or 0.0) > 0:
                     logging.info(f"[{symbol_indodax}] Saldo koin kosong/receh, menghapus Harga Beli dari memori.")
                     state.entry_price = 0.0
+                    state.highest_price_since_buy = 0.0
 
                 if signal == "BUY" and last_signals[symbol_indodax] != "BUY":
                     if idr_bal >= coin_buy_amount or DRY_RUN:
@@ -168,6 +186,7 @@ def main():
                             notifier.send_message(msg)
                             last_signals[symbol_indodax] = "BUY"
                             state.entry_price = current_price_idr
+                            state.highest_price_since_buy = current_price_idr
                             
                             # Catat ke Tabel TradeHistory (Tercatat abadi di Database)
                             trade = TradeHistory(
@@ -198,6 +217,7 @@ def main():
                             notifier.send_message(msg)
                             last_signals[symbol_indodax] = "SELL"
                             state.entry_price = 0.0
+                            state.highest_price_since_buy = 0.0
                             last_sell_times[symbol_indodax] = time.time()
                             
                             # Catat ke Tabel TradeHistory
