@@ -26,6 +26,9 @@ class BotState(Base):
     use_trailing_stop = Column(Integer, default=0) # 0 = False, 1 = True
     trailing_stop_pct = Column(Float, default=2.0)
     highest_price_since_buy = Column(Float, default=0.0)
+    use_dynamic_roi = Column(Integer, default=0) # 0 = False, 1 = True
+    dynamic_roi_config = Column(String, default='{"0": 5.0, "60": 2.0, "1440": 0.5}')
+    last_buy_time = Column(Float, default=0.0)
     mixa_insight = Column(String)
     chart_data = Column(String) # Disimpan dalam format JSON string (50 Lilin Terakhir)
     last_update = Column(DateTime, default=get_wib_time, onupdate=get_wib_time)
@@ -97,6 +100,18 @@ def init_db(db_url="sqlite:///data/trading.db"):
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN highest_price_since_buy FLOAT DEFAULT 0.0"))
             except Exception as e:
                 print(f"Migrasi highest_price_since_buy dilewati: {e}")
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN use_dynamic_roi INTEGER DEFAULT 0"))
+            except Exception as e:
+                print(f"Migrasi use_dynamic_roi dilewati: {e}")
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN dynamic_roi_config VARCHAR DEFAULT '{\"0\": 5.0, \"60\": 2.0, \"1440\": 0.5}'"))
+            except Exception as e:
+                print(f"Migrasi dynamic_roi_config dilewati: {e}")
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN last_buy_time FLOAT DEFAULT 0.0"))
+            except Exception as e:
+                print(f"Migrasi last_buy_time dilewati: {e}")
             try:
                 conn.commit()
             except Exception:

@@ -46,6 +46,9 @@ def get_bot_status():
                 "is_active": bool(state.is_active),
                 "use_trailing_stop": bool(state.use_trailing_stop),
                 "trailing_stop_pct": state.trailing_stop_pct,
+                "use_dynamic_roi": bool(state.use_dynamic_roi),
+                "dynamic_roi_config": state.dynamic_roi_config,
+                "last_buy_time": state.last_buy_time,
                 "highest_price_since_buy": state.highest_price_since_buy,
                 "mixa_insight": state.mixa_insight,
                 "last_update": state.last_update.isoformat() if state.last_update else None
@@ -143,6 +146,9 @@ class BotConfigUpdate(BaseModel):
     use_trailing_stop: Optional[bool] = None
     trailing_stop_pct: Optional[float] = None
     highest_price_since_buy: Optional[float] = None
+    use_dynamic_roi: Optional[bool] = None
+    dynamic_roi_config: Optional[str] = None
+    last_buy_time: Optional[float] = None
 
 @app.post("/api/bot-config/{symbol_path:path}")
 def update_bot_config(symbol_path: str, config: BotConfigUpdate):
@@ -165,14 +171,43 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate):
             state.is_active = 1 if config.is_active else 0
         if config.entry_price is not None:
             state.entry_price = config.entry_price
+            # Auto-set last_buy_time if entry_price is set manually and last_buy_time is 0
+            if config.entry_price > 0 and (state.last_buy_time or 0.0) == 0.0:
+                import time
+                state.last_buy_time = time.time()
+            elif config.entry_price == 0:
+                state.last_buy_time = 0.0
+                state.highest_price_since_buy = 0.0
         if config.use_trailing_stop is not None:
             state.use_trailing_stop = 1 if config.use_trailing_stop else 0
         if config.trailing_stop_pct is not None:
             state.trailing_stop_pct = config.trailing_stop_pct
         if config.highest_price_since_buy is not None:
             state.highest_price_since_buy = config.highest_price_since_buy
+        if config.use_dynamic_roi is not None:
+            state.use_dynamic_roi = 1 if config.use_dynamic_roi else 0
+        if config.dynamic_roi_config is not None:
+            state.dynamic_roi_config = config.dynamic_roi_config
+        if config.last_buy_time is not None:
+            state.last_buy_time = config.last_buy_time
             
         db.commit()
         return {"message": f"Configuration for {symbol_path} updated successfully"}
     finally:
         db.close()
+
+@app.get("/api/logs")
+def get_system_logs():
+    """Mengembalikan 200 baris terakhir dari log sistem (bot.log)."""
+    import os
+    log_file = "logs/bot.log"
+    if not os.path.exists(log_file):
+        return {"logs": ["File log belum tersedia. Menunggu bot berjalan..."]}
+    
+    try:
+        with open(log_file, "r") as f:
+            lines = f.readlines()
+            # Ambil 200 baris terakhir, dan hilangkan newline di akhir string
+            return {"logs": [line.strip() for line in lines[-200:]]}
+    except Exception as e:
+        return {"logs": [f"Gagal membaca log: {e}"]}

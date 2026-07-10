@@ -11,8 +11,11 @@ from notifier import TelegramNotifier
 from mixa_ai import MixaAI
 from database import init_db, BotState, TradeHistory, AppConfig
 
-# Konfigurasi Catatan (Logging) agar tercetak di layar
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Konfigurasi Catatan (Logging) agar tercetak di layar dan di file
+os.makedirs("logs", exist_ok=True)
+logging.basicConfig(level=logging.INFO, 
+                    format='%(asctime)s - %(levelname)s - %(message)s',
+                    handlers=[logging.FileHandler("logs/bot.log"), logging.StreamHandler()])
 
 def main():
     # 1. Muat pengaturan rahasia dari file .env
@@ -140,20 +143,40 @@ def main():
                         
                     pnl_pct = ((current_price_idr - entry_price) / entry_price) * 100
                     
-                    # Cek Trailing Stop Loss (jika aktif)
-                    if state.use_trailing_stop:
+                    # 1. Cek Dynamic ROI
+                    dynamic_target_pct = coin_tp_pct
+                    if state.use_dynamic_roi and state.dynamic_roi_config and state.last_buy_time:
+                        try:
+                            roi_rules = json.loads(state.dynamic_roi_config)
+                            minutes_held = (time.time() - state.last_buy_time) / 60.0
+                            
+                            # Cari target dari rule yang menitnya sudah terlampaui
+                            for min_str in sorted(roi_rules.keys(), key=int, reverse=True):
+                                if minutes_held >= int(min_str):
+                                    dynamic_target_pct = float(roi_rules[min_str])
+                                    break
+                                    
+                            if pnl_pct >= dynamic_target_pct:
+                                logging.info(f"[{symbol_indodax}] DYNAMIC ROI TERCAPAI! Waktu tahan: {minutes_held:.0f}mnt. Target: {dynamic_target_pct}%. PnL: {pnl_pct:.2f}%")
+                                signal = "SELL"
+                        except Exception as e:
+                            logging.error(f"[{symbol_indodax}] Gagal memproses Dynamic ROI: {e}")
+                    
+                    # 2. Cek Trailing Stop Loss (jika aktif)
+                    if signal != "SELL" and state.use_trailing_stop:
                         if highest_price > 0:
                             drop_pct = ((highest_price - current_price_idr) / highest_price) * 100
                             if drop_pct >= (state.trailing_stop_pct or 2.0):
                                 logging.info(f"[{symbol_indodax}] TRAILING STOP TERKENA! Turun {drop_pct:.2f}% dari puncak. PnL: {pnl_pct:.2f}%")
                                 signal = "SELL"
                     
-                    # Cek Fixed TP/SL (Fallback)
+                    # 3. Cek Fixed TP/SL (Fallback)
                     if signal != "SELL":
                         if pnl_pct <= -coin_sl_pct:
                             logging.warning(f"[{symbol_indodax}] STOP LOSS TERKENA! Rugi: {pnl_pct:.2f}% (Batas: -{coin_sl_pct}%)")
                             signal = "SELL"
-                        elif pnl_pct >= coin_tp_pct:
+                        # Hanya cek Fixed TP jika Dynamic ROI tidak aktif (karena Dynamic ROI menimpa target)
+                        elif not state.use_dynamic_roi and pnl_pct >= coin_tp_pct:
                             logging.info(f"[{symbol_indodax}] TAKE PROFIT TERCAPAI! Untung: {pnl_pct:.2f}% (Target: +{coin_tp_pct}%)")
                             signal = "SELL"
                 
@@ -176,6 +199,7 @@ def main():
                     logging.info(f"[{symbol_indodax}] Saldo koin kosong/receh, menghapus Harga Beli dari memori.")
                     state.entry_price = 0.0
                     state.highest_price_since_buy = 0.0
+                    state.last_buy_time = 0.0
 
                 if signal == "BUY" and last_signals[symbol_indodax] != "BUY":
                     if idr_bal >= coin_buy_amount or DRY_RUN:
@@ -187,6 +211,7 @@ def main():
                             last_signals[symbol_indodax] = "BUY"
                             state.entry_price = current_price_idr
                             state.highest_price_since_buy = current_price_idr
+                            state.last_buy_time = time.time()
                             
                             # Catat ke Tabel TradeHistory (Tercatat abadi di Database)
                             trade = TradeHistory(
@@ -218,6 +243,7 @@ def main():
                             last_signals[symbol_indodax] = "SELL"
                             state.entry_price = 0.0
                             state.highest_price_since_buy = 0.0
+                            state.last_buy_time = 0.0
                             last_sell_times[symbol_indodax] = time.time()
                             
                             # Catat ke Tabel TradeHistory
