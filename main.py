@@ -154,6 +154,40 @@ def main():
                                 logging.info(f"[{symbol_indodax}] Tren Makro (4H) Bullish. Sinyal BUY divalidasi!")
                     except Exception as e:
                         logging.error(f"[{symbol_indodax}] Gagal mengecek Tren Makro: {e}")
+                        
+                # ==== PHASE 2: TRAILING BUY ====
+                if getattr(state, 'use_trailing_buy', 0) == 1 and (state.entry_price or 0.0) == 0.0:
+                    is_active = getattr(state, 'trailing_buy_active', 0) == 1
+                    lowest_price = getattr(state, 'trailing_buy_lowest_price', 0.0)
+                    bounce_pct = getattr(state, 'trailing_buy_pct', 1.0)
+                    
+                    if signal == "SELL" and is_active:
+                        logging.warning(f"[{symbol_indodax}] Sinyal berubah SELL! Membatalkan antrean Trailing Buy.")
+                        state.trailing_buy_active = 0
+                        state.trailing_buy_lowest_price = 0.0
+                        
+                    elif signal == "BUY" and not is_active:
+                        logging.info(f"[{symbol_indodax}] Sinyal BUY ditahan! Mengaktifkan Trailing Buy untuk mencari harga serok termurah.")
+                        state.trailing_buy_active = 1
+                        state.trailing_buy_lowest_price = current_price_idr
+                        signal = "HOLD" # Tunda pembelian
+                        
+                    elif is_active:
+                        if current_price_idr < lowest_price:
+                            logging.info(f"[{symbol_indodax}] Trailing Buy: Mendapat dasar baru (Rp {current_price_idr:,.0f}). Serok makin dalam!")
+                            state.trailing_buy_lowest_price = current_price_idr
+                            signal = "HOLD"
+                        else:
+                            bounce_threshold = lowest_price * (1 + (bounce_pct / 100.0))
+                            if current_price_idr >= bounce_threshold:
+                                logging.info(f"[{symbol_indodax}] Trailing Buy: Harga memantul naik ke Rp {current_price_idr:,.0f} (+{bounce_pct}%)! EKSEKUSI SEROK SEKARANG!")
+                                state.trailing_buy_active = 0
+                                state.trailing_buy_lowest_price = 0.0
+                                signal = "BUY"
+                            else:
+                                logging.info(f"[{symbol_indodax}] Trailing Buy: Menunggu pantulan naik minimal ke Rp {bounce_threshold:,.0f}.")
+                                signal = "HOLD"
+
                 # ==== RISK MANAGEMENT (TP/SL) ====
                 # Sinkronisasi Total Investasi (Berguna jika pengguna mengisi Manual Entry Price di UI)
                 if (state.entry_price or 0.0) > 0 and (state.total_idr_invested or 0.0) == 0.0:

@@ -162,6 +162,10 @@ class BotConfigUpdate(BaseModel):
     dca_completed_orders: Optional[int] = None
     total_idr_invested: Optional[float] = None
     use_macro_trend: Optional[bool] = None
+    use_trailing_buy: Optional[bool] = None
+    trailing_buy_pct: Optional[float] = None
+    trailing_buy_active: Optional[bool] = None
+    trailing_buy_lowest_price: Optional[float] = None
 
 @app.post("/api/bot-config/{symbol_path:path}")
 def update_bot_config(symbol_path: str, config: BotConfigUpdate):
@@ -221,6 +225,17 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate):
             state.total_idr_invested = config.total_idr_invested
         if config.use_macro_trend is not None:
             state.use_macro_trend = 1 if config.use_macro_trend else 0
+        if config.use_trailing_buy is not None:
+            state.use_trailing_buy = 1 if config.use_trailing_buy else 0
+            if not config.use_trailing_buy:
+                # Reset tracking if turned off
+                state.trailing_buy_active = 0
+        if config.trailing_buy_pct is not None:
+            state.trailing_buy_pct = config.trailing_buy_pct
+        if config.trailing_buy_active is not None:
+            state.trailing_buy_active = 1 if config.trailing_buy_active else 0
+        if config.trailing_buy_lowest_price is not None:
+            state.trailing_buy_lowest_price = config.trailing_buy_lowest_price
             
         db.commit()
         return {"message": f"Configuration for {symbol_path} updated successfully"}

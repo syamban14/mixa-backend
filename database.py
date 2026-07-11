@@ -35,6 +35,10 @@ class BotState(Base):
     dca_volume_scale = Column(Float, default=1.0)
     dca_completed_orders = Column(Integer, default=0)
     use_macro_trend = Column(Integer, default=0) # 0 = False, 1 = True
+    use_trailing_buy = Column(Integer, default=0)
+    trailing_buy_pct = Column(Float, default=1.0)
+    trailing_buy_active = Column(Integer, default=0)
+    trailing_buy_lowest_price = Column(Float, default=0.0)
     total_idr_invested = Column(Float, default=0.0)
     mixa_insight = Column(String)
     chart_data = Column(String) # Disimpan dalam format JSON string (50 Lilin Terakhir)
@@ -145,6 +149,22 @@ def init_db(db_url="sqlite:///data/trading.db"):
                 pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN use_macro_trend INTEGER DEFAULT 0"))
+            except Exception as e:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN use_trailing_buy INTEGER DEFAULT 0"))
+            except Exception as e:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN trailing_buy_pct FLOAT DEFAULT 1.0"))
+            except Exception as e:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN trailing_buy_active INTEGER DEFAULT 0"))
+            except Exception as e:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN trailing_buy_lowest_price FLOAT DEFAULT 0.0"))
             except Exception as e:
                 pass
             try:
