@@ -139,6 +139,21 @@ def main():
                     
                 signal = strategy.analyze(df)
                 
+                # ==== PHASE 1: MACRO TREND FILTER (4H) ====
+                if signal == "BUY" and getattr(state, 'use_macro_trend', 0) == 1:
+                    logging.info(f"[{symbol_indodax}] Sinyal BUY terdeteksi (15m). Memeriksa Tren Makro (4H)...")
+                    try:
+                        df_4h = indodax_executor.fetch_hidden_ohlcv(api_symbol, tf="240", limit=60)
+                        if not df_4h.empty and len(df_4h) >= 50:
+                            sma_50_4h = df_4h['close'].rolling(window=50).mean().iloc[-1]
+                            current_4h_price = float(df_4h.iloc[-1]['close'])
+                            if current_4h_price < sma_50_4h:
+                                logging.warning(f"[{symbol_indodax}] Tren Makro (4H) Bearish (Harga {current_4h_price:,.0f} < SMA50 {sma_50_4h:,.0f}). Sinyal BUY dibatalkan (Fakeout dicegah)!")
+                                signal = "HOLD"
+                            else:
+                                logging.info(f"[{symbol_indodax}] Tren Makro (4H) Bullish. Sinyal BUY divalidasi!")
+                    except Exception as e:
+                        logging.error(f"[{symbol_indodax}] Gagal mengecek Tren Makro: {e}")
                 # ==== RISK MANAGEMENT (TP/SL) ====
                 # Sinkronisasi Total Investasi (Berguna jika pengguna mengisi Manual Entry Price di UI)
                 if (state.entry_price or 0.0) > 0 and (state.total_idr_invested or 0.0) == 0.0:

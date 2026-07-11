@@ -161,6 +161,7 @@ class BotConfigUpdate(BaseModel):
     dca_volume_scale: Optional[float] = None
     dca_completed_orders: Optional[int] = None
     total_idr_invested: Optional[float] = None
+    use_macro_trend: Optional[bool] = None
 
 @app.post("/api/bot-config/{symbol_path:path}")
 def update_bot_config(symbol_path: str, config: BotConfigUpdate):
@@ -218,6 +219,8 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate):
             state.dca_completed_orders = config.dca_completed_orders
         if config.total_idr_invested is not None:
             state.total_idr_invested = config.total_idr_invested
+        if config.use_macro_trend is not None:
+            state.use_macro_trend = 1 if config.use_macro_trend else 0
             
         db.commit()
         return {"message": f"Configuration for {symbol_path} updated successfully"}

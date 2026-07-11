@@ -34,6 +34,7 @@ class BotState(Base):
     dca_step_pct = Column(Float, default=3.0)
     dca_volume_scale = Column(Float, default=1.0)
     dca_completed_orders = Column(Integer, default=0)
+    use_macro_trend = Column(Integer, default=0) # 0 = False, 1 = True
     total_idr_invested = Column(Float, default=0.0)
     mixa_insight = Column(String)
     chart_data = Column(String) # Disimpan dalam format JSON string (50 Lilin Terakhir)
@@ -73,75 +74,79 @@ def init_db(db_url="sqlite:///data/trading.db"):
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN take_profit_pct FLOAT DEFAULT 10.0"))
             except Exception as e:
-                print(f"Migrasi TP dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN stop_loss_pct FLOAT DEFAULT 5.0"))
             except Exception as e:
-                print(f"Migrasi SL dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN strategy VARCHAR DEFAULT 'MA Crossover'"))
             except Exception as e:
-                print(f"Migrasi Strategy dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN buy_amount FLOAT DEFAULT 20000.0"))
             except Exception as e:
-                print(f"Migrasi Buy Amount dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN is_active INTEGER DEFAULT 1"))
             except Exception as e:
-                print(f"Migrasi is_active dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE trade_history ADD COLUMN pnl_pct FLOAT NULL"))
             except Exception as e:
-                print(f"Migrasi pnl_pct dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN use_trailing_stop INTEGER DEFAULT 0"))
             except Exception as e:
-                print(f"Migrasi use_trailing_stop dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN trailing_stop_pct FLOAT DEFAULT 2.0"))
             except Exception as e:
-                print(f"Migrasi trailing_stop_pct dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN highest_price_since_buy FLOAT DEFAULT 0.0"))
             except Exception as e:
-                print(f"Migrasi highest_price_since_buy dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN use_dynamic_roi INTEGER DEFAULT 0"))
             except Exception as e:
-                print(f"Migrasi use_dynamic_roi dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN dynamic_roi_config VARCHAR DEFAULT '{\"0\": 5.0, \"60\": 2.0, \"1440\": 0.5}'"))
             except Exception as e:
-                print(f"Migrasi dynamic_roi_config dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN last_buy_time FLOAT DEFAULT 0.0"))
             except Exception as e:
-                print(f"Migrasi last_buy_time dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN use_dca INTEGER DEFAULT 0"))
             except Exception as e:
-                print(f"Migrasi use_dca dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN dca_max_orders INTEGER DEFAULT 3"))
             except Exception as e:
-                print(f"Migrasi dca_max_orders dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN dca_step_pct FLOAT DEFAULT 3.0"))
             except Exception as e:
-                print(f"Migrasi dca_step_pct dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN dca_volume_scale FLOAT DEFAULT 1.0"))
             except Exception as e:
-                print(f"Migrasi dca_volume_scale dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN dca_completed_orders INTEGER DEFAULT 0"))
             except Exception as e:
-                print(f"Migrasi dca_completed_orders dilewati: {e}")
+                pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN total_idr_invested FLOAT DEFAULT 0.0"))
             except Exception as e:
-                print(f"Migrasi total_idr_invested dilewati: {e}")
+                pass
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN use_macro_trend INTEGER DEFAULT 0"))
+            except Exception as e:
+                pass
             try:
                 conn.commit()
             except Exception:
