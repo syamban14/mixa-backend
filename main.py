@@ -9,7 +9,7 @@ from exchange_handler import IndodaxHandler
 from strategy import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy
 from notifier import TelegramNotifier
 from mixa_ai import MixaAI
-from database import init_db, BotState, TradeHistory, AppConfig
+from database import init_db, BotState, TradeHistory, AppConfig, Notification
 
 # Konfigurasi Catatan (Logging) agar tercetak di layar dan di file
 os.makedirs("logs", exist_ok=True)
@@ -117,6 +117,59 @@ def main():
                     last_signals[symbol_indodax] = "HOLD"
                     last_sell_times[symbol_indodax] = 0.0
                     last_mixa_times[symbol_indodax] = time.time() - 900
+                
+                # ==== PHASE 4: AUTOPILOT AI ====
+                if getattr(state, 'use_autotune', 0) == 1:
+                    current_time = time.time()
+                    last_autotune = getattr(state, 'last_autotune_time', 0.0)
+                    if current_time - last_autotune > 4 * 3600:
+                        logging.info(f"[{symbol_indodax}] Memulai Evaluasi Autopilot (Tiap 4 Jam)...")
+                        df_4h = indodax_executor.fetch_hidden_ohlcv(api_symbol, tf="240", limit=210)
+                        if not df_4h.empty and len(df_4h) >= 200:
+                            # Kalkulasi Indikator Makro
+                            df_4h['tr0'] = abs(df_4h['high'] - df_4h['low'])
+                            df_4h['tr1'] = abs(df_4h['high'] - df_4h['close'].shift())
+                            df_4h['tr2'] = abs(df_4h['low'] - df_4h['close'].shift())
+                            df_4h['tr'] = df_4h[['tr0', 'tr1', 'tr2']].max(axis=1)
+                            atr = df_4h['tr'].rolling(window=14).mean().iloc[-1]
+                            
+                            sma_50 = df_4h['close'].rolling(window=50).mean().iloc[-1]
+                            sma_200 = df_4h['close'].rolling(window=200).mean().iloc[-1]
+                            price = float(df_4h.iloc[-1]['close'])
+                            
+                            atr_pct = (atr / price) * 100
+                            
+                            new_strategy = state.strategy
+                            new_dca = getattr(state, 'use_dca', 0)
+                            note = ""
+                            
+                            if price < sma_200:
+                                new_strategy = "RSI Breakout"
+                                new_dca = 0
+                                note = "BEAR MARKET: Harga < SMA 200. Beralih ke RSI Breakout & Mematikan DCA."
+                            elif atr_pct < 1.0: # Volatilitas sangat rendah
+                                new_strategy = "Bollinger Bands"
+                                note = f"SIDEWAYS: Volatilitas ({atr_pct:.2f}%) rendah. Beralih ke Bollinger Bands."
+                            elif price > sma_50:
+                                new_strategy = "MA Crossover"
+                                new_dca = 1
+                                note = "BULL MARKET: Harga > SMA 50. Beralih ke MA Crossover & Menyalakan DCA."
+                            
+                            changed = False
+                            if note and (new_strategy != state.strategy or new_dca != getattr(state, 'use_dca', 0)):
+                                state.strategy = new_strategy
+                                state.use_dca = new_dca
+                                changed = True
+                                
+                                notif = Notification(
+                                    message=f"[{symbol_indodax}] AUTOPILOT: {note}",
+                                    type="warning" if "BEAR" in note else "success" if "BULL" in note else "info"
+                                )
+                                db_session.add(notif)
+                                logging.info(f"[{symbol_indodax}] {note}")
+                                
+                            state.last_autotune_time = current_time
+                            db_session.commit()
                 
                 logging.info(f"[{symbol_indodax}] Mengambil grafik dari API Rahasia Indodax...")
                 df = indodax_executor.fetch_hidden_ohlcv(api_symbol, tf="15", limit=200)
@@ -312,10 +365,10 @@ def main():
                 
                 # Sinkronisasi Cerdas: Jika koin sudah tidak ada di Indodax (dijual manual), reset harga beli
                 # BUGFIX: Cek ke API Indodax apakah masih ada antrean beli (pending order). Jika ada, JANGAN hapus ingatan.
-                # BUGFIX: Turunkan batas dari 11000 ke 5000, karena pembelian minimum 10.000 (setelah dipotong fee) akan menjadi ~9.970.
+                # BUGFIX: Turunkan batas menjadi 1000 agar koin receh yang sedang drop (contoh PEPE) tidak dianggap sudah dijual manual.
                 estimated_value_idr = asset_bal * current_price_idr
                 
-                if estimated_value_idr < 5000 and (state.entry_price or 0.0) > 0:
+                if estimated_value_idr < 1000 and (state.entry_price or 0.0) > 0:
                     if not indodax_executor.has_open_orders(symbol_indodax):
                         logging.info(f"[{symbol_indodax}] Saldo koin kosong & tidak ada pending order, menghapus Harga Beli dari memori.")
                         state.entry_price = 0.0
@@ -351,8 +404,8 @@ def main():
                         last_signals[symbol_indodax] = "BUY" # Saldo habis, bungkam agar tidak spam Indodax
                         
                 elif signal == "SELL" and last_signals[symbol_indodax] != "SELL":
-                    # Filter Receh: Batas aman Rp 11.000 (Standar Emas)
-                    if estimated_value_idr >= 11000 or DRY_RUN:
+                    # Filter Receh: Batas minimal Indodax adalah Rp 10.000
+                    if estimated_value_idr >= 10000 or DRY_RUN:
                         amount_to_sell = 0.001 if DRY_RUN else asset_bal 
                         order = indodax_executor.place_sell_order(symbol_indodax, amount_to_sell)
                         
