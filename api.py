@@ -61,6 +61,7 @@ def get_bot_status():
                 "use_trailing_buy": bool(state.use_trailing_buy),
                 "trailing_buy_pct": state.trailing_buy_pct,
                 "use_whale_radar": bool(state.use_whale_radar),
+                "use_autotune": bool(state.use_autotune),
                 "last_update": state.last_update.isoformat() if state.last_update else None
             })
         return result
@@ -171,6 +172,7 @@ class BotConfigUpdate(BaseModel):
     trailing_buy_active: Optional[bool] = None
     trailing_buy_lowest_price: Optional[float] = None
     use_whale_radar: Optional[bool] = None
+    use_autotune: Optional[bool] = None
 
 @app.post("/api/bot-config/{symbol_path:path}")
 def update_bot_config(symbol_path: str, config: BotConfigUpdate):
@@ -243,6 +245,8 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate):
             state.trailing_buy_lowest_price = config.trailing_buy_lowest_price
         if config.use_whale_radar is not None:
             state.use_whale_radar = 1 if config.use_whale_radar else 0
+        if config.use_autotune is not None:
+            state.use_autotune = 1 if config.use_autotune else 0
             
         db.commit()
         return {"message": f"Configuration for {symbol_path} updated successfully"}
@@ -263,4 +267,51 @@ def get_system_logs():
             # Ambil 200 baris terakhir, dan hilangkan newline di akhir string
             return {"logs": [line.strip() for line in lines[-200:]]}
     except Exception as e:
-        return {"logs": [f"Gagal membaca log: {e}"]}
+        return {"error": str(e)}
+
+@app.get("/api/notifications")
+def get_notifications():
+    """Mengambil notifikasi yang belum dibaca atau 20 notifikasi terbaru."""
+    db = Session()
+    try:
+        from database import Notification
+        
+        # Ambil semua yang unread ATAU maksimal 20 terbaru jika sudah dibaca
+        unread = db.query(Notification).filter_by(is_read=0).order_by(Notification.timestamp.desc()).all()
+        if len(unread) < 10:
+            latest = db.query(Notification).order_by(Notification.timestamp.desc()).limit(20).all()
+            # Hindari duplikat
+            seen_ids = set()
+            combined = []
+            for n in unread + latest:
+                if n.id not in seen_ids:
+                    combined.append(n)
+                    seen_ids.add(n.id)
+            notifications = sorted(combined, key=lambda x: x.timestamp, reverse=True)
+        else:
+            notifications = unread
+            
+        result = []
+        for n in notifications:
+            result.append({
+                "id": n.id,
+                "message": n.message,
+                "type": n.type,
+                "is_read": bool(n.is_read),
+                "timestamp": n.timestamp.isoformat() if n.timestamp else None
+            })
+        return {"notifications": result}
+    finally:
+        db.close()
+
+@app.post("/api/notifications/read")
+def mark_notifications_read():
+    """Menandai semua notifikasi sebagai sudah dibaca."""
+    db = Session()
+    try:
+        from database import Notification
+        db.query(Notification).filter_by(is_read=0).update({"is_read": 1})
+        db.commit()
+        return {"success": True}
+    finally:
+        db.close()

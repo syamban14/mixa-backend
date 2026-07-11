@@ -40,6 +40,8 @@ class BotState(Base):
     trailing_buy_active = Column(Integer, default=0)
     trailing_buy_lowest_price = Column(Float, default=0.0)
     use_whale_radar = Column(Integer, default=0) # 0 = False, 1 = True
+    use_autotune = Column(Integer, default=0) # 0 = Manual, 1 = Autopilot
+    last_autotune_time = Column(Float, default=0.0) # Timestamp terakhir kali autotune berjalan
     total_idr_invested = Column(Float, default=0.0)
     mixa_insight = Column(String)
     chart_data = Column(String) # Disimpan dalam format JSON string (50 Lilin Terakhir)
@@ -52,6 +54,15 @@ class AppConfig(Base):
     value = Column(String)
 
 # Tabel Riwayat Transaksi (Bertambah Terus Tanpa Batas)
+class Notification(Base):
+    __tablename__ = 'notifications'
+    
+    id = Column(Integer, primary_key=True)
+    message = Column(String, nullable=False)
+    type = Column(String, default='info') # info, warning, success, error
+    timestamp = Column(DateTime, default=get_wib_time)
+    is_read = Column(Integer, default=0) # 0 = unread, 1 = read
+
 class TradeHistory(Base):
     __tablename__ = 'trade_history'
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -170,6 +181,14 @@ def init_db(db_url="sqlite:///data/trading.db"):
                 pass
             try:
                 conn.execute(text("ALTER TABLE bot_state ADD COLUMN use_whale_radar INTEGER DEFAULT 0"))
+            except Exception as e:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN use_autotune INTEGER DEFAULT 0"))
+            except Exception as e:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE bot_state ADD COLUMN last_autotune_time FLOAT DEFAULT 0.0"))
             except Exception as e:
                 pass
             try:
