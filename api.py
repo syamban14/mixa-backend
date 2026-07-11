@@ -166,6 +166,7 @@ class BotConfigUpdate(BaseModel):
     trailing_buy_pct: Optional[float] = None
     trailing_buy_active: Optional[bool] = None
     trailing_buy_lowest_price: Optional[float] = None
+    use_whale_radar: Optional[bool] = None
 
 @app.post("/api/bot-config/{symbol_path:path}")
 def update_bot_config(symbol_path: str, config: BotConfigUpdate):
@@ -236,6 +237,8 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate):
             state.trailing_buy_active = 1 if config.trailing_buy_active else 0
         if config.trailing_buy_lowest_price is not None:
             state.trailing_buy_lowest_price = config.trailing_buy_lowest_price
+        if config.use_whale_radar is not None:
+            state.use_whale_radar = 1 if config.use_whale_radar else 0
             
         db.commit()
         return {"message": f"Configuration for {symbol_path} updated successfully"}

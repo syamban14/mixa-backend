@@ -189,3 +189,48 @@ class IndodaxHandler:
             # Jika gagal mengecek (misal error API/Rate Limit), kembalikan True sebagai tindakan pencegahan (failsafe)
             # agar bot tidak langsung menghapus memori harga beli.
             return True
+
+    def get_orderbook_imbalance(self, symbol: str, depth_pct: float = 2.0) -> dict:
+        """
+        Membaca buku pesanan (orderbook) untuk mendeteksi tembok jual raksasa (Sell Wall).
+        depth_pct: Seberapa jauh ke atas/bawah harga saat ini (dalam persen) yang ingin kita ukur volumenya.
+        """
+        try:
+            orderbook = self.exchange.fetch_order_book(symbol)
+            bids = orderbook['bids'] # List of [price, amount] (Yang mau beli)
+            asks = orderbook['asks'] # List of [price, amount] (Yang mau jual)
+            
+            if not bids or not asks:
+                return {"bid_vol": 0, "ask_vol": 0, "ratio": 1.0}
+                
+            current_price = (bids[0][0] + asks[0][0]) / 2.0
+            
+            upper_limit = current_price * (1 + (depth_pct / 100.0))
+            lower_limit = current_price * (1 - (depth_pct / 100.0))
+            
+            ask_vol = 0.0
+            for ask in asks:
+                price, amount = ask[0], ask[1]
+                if price <= upper_limit:
+                    ask_vol += (price * amount) # Hitung dalam Rupiah
+                else:
+                    break # asks sudah diurutkan dari yang terendah
+                    
+            bid_vol = 0.0
+            for bid in bids:
+                price, amount = bid[0], bid[1]
+                if price >= lower_limit:
+                    bid_vol += (price * amount)
+                else:
+                    break # bids sudah diurutkan dari yang tertinggi
+                    
+            ratio = (ask_vol / bid_vol) if bid_vol > 0 else 999.0
+            
+            return {
+                "bid_vol": bid_vol,
+                "ask_vol": ask_vol,
+                "ratio": ratio
+            }
+        except Exception as e:
+            logging.error(f"Gagal mengambil orderbook untuk {symbol}: {e}")
+            return {"bid_vol": 0, "ask_vol": 0, "ratio": 1.0}

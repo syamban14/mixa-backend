@@ -155,6 +155,18 @@ def main():
                     except Exception as e:
                         logging.error(f"[{symbol_indodax}] Gagal mengecek Tren Makro: {e}")
                         
+                # ==== PHASE 3: WHALE RADAR (ORDERBOOK) ====
+                if signal == "BUY" and getattr(state, 'use_whale_radar', 0) == 1:
+                    try:
+                        imbalance = indodax_executor.get_orderbook_imbalance(symbol_indodax, depth_pct=2.0)
+                        if imbalance['ratio'] >= 3.0: # Jika Tembok Jual 3x lipat lebih besar dari Tembok Beli
+                            logging.warning(f"[{symbol_indodax}] WHALE RADAR ALERT! Tembok Jual {imbalance['ratio']:.1f}x lebih besar. Sinyal BUY ditahan untuk menghindari dump Bandar!")
+                            signal = "HOLD"
+                        else:
+                            logging.info(f"[{symbol_indodax}] Whale Radar Aman. Rasio Jual/Beli: {imbalance['ratio']:.2f}")
+                    except Exception as e:
+                        logging.error(f"[{symbol_indodax}] Gagal mengecek Whale Radar: {e}")
+                        
                 # ==== PHASE 2: TRAILING BUY ====
                 if getattr(state, 'use_trailing_buy', 0) == 1 and (state.entry_price or 0.0) == 0.0:
                     is_active = getattr(state, 'trailing_buy_active', 0) == 1
