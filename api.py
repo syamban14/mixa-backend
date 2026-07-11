@@ -57,6 +57,10 @@ def get_bot_status():
                 "total_idr_invested": state.total_idr_invested,
                 "highest_price_since_buy": state.highest_price_since_buy,
                 "mixa_insight": state.mixa_insight,
+                "use_macro_trend": bool(state.use_macro_trend),
+                "use_trailing_buy": bool(state.use_trailing_buy),
+                "trailing_buy_pct": state.trailing_buy_pct,
+                "use_whale_radar": bool(state.use_whale_radar),
                 "last_update": state.last_update.isoformat() if state.last_update else None
             })
         return result
