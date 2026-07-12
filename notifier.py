@@ -1,6 +1,6 @@
 import requests
 import logging
-from database import get_db, AppConfig
+from database import Session, AppConfig
 import os
 
 class TelegramNotifier:
@@ -12,7 +12,7 @@ class TelegramNotifier:
         
     def _get_credentials(self):
         """Ambil kredensial dari AppConfig (Database), fallback ke .env"""
-        db = next(get_db())
+        db = Session()
         try:
             token_conf = db.query(AppConfig).filter_by(key="TELEGRAM_TOKEN").first()
             chat_conf = db.query(AppConfig).filter_by(key="TELEGRAM_CHAT_ID").first()
