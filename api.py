@@ -105,6 +105,8 @@ def get_chart_data(symbol_path: str):
 class ConfigUpdate(BaseModel):
     gemini_model: str
     initial_balance: float = 0.0
+    telegram_token: str = ""
+    telegram_chat_id: str = ""
 
 @app.get("/api/config")
 def get_config():
@@ -117,7 +119,18 @@ def get_config():
         config_balance = db.query(AppConfig).filter_by(key="INITIAL_BALANCE").first()
         initial_balance = float(config_balance.value) if config_balance else 0.0
         
-        return {"gemini_model": model_name, "initial_balance": initial_balance}
+        config_token = db.query(AppConfig).filter_by(key="TELEGRAM_TOKEN").first()
+        telegram_token = config_token.value if config_token else ""
+        
+        config_chat = db.query(AppConfig).filter_by(key="TELEGRAM_CHAT_ID").first()
+        telegram_chat_id = config_chat.value if config_chat else ""
+        
+        return {
+            "gemini_model": model_name, 
+            "initial_balance": initial_balance,
+            "telegram_token": telegram_token,
+            "telegram_chat_id": telegram_chat_id
+        }
     finally:
         db.close()
 
@@ -142,10 +155,158 @@ def update_config(data: ConfigUpdate):
         else:
             config_balance.value = str(data.initial_balance)
             
+        # Simpan Telegram Config
+        for key, val in [("TELEGRAM_TOKEN", data.telegram_token), ("TELEGRAM_CHAT_ID", data.telegram_chat_id)]:
+            if val is not None:
+                config_item = db.query(AppConfig).filter_by(key=key).first()
+                if not config_item:
+                    config_item = AppConfig(key=key, value=val)
+                    db.add(config_item)
+                else:
+                    config_item.value = val
+                    
         db.commit()
-        return {"message": "Configuration updated successfully", "gemini_model": data.gemini_model, "initial_balance": data.initial_balance}
+        return {"message": "Configuration updated successfully"}
     finally:
         db.close()
+
+class TelegramTest(BaseModel):
+    telegram_token: str
+    telegram_chat_id: str
+
+@app.post("/api/config/telegram_test")
+def test_telegram(data: TelegramTest):
+    """Mengirim pesan uji coba ke Telegram."""
+    if not data.telegram_token or not data.telegram_chat_id:
+        raise HTTPException(status_code=400, detail="Token dan Chat ID harus diisi")
+        
+    try:
+        from notifier import TelegramNotifier
+        test_notifier = TelegramNotifier(token=data.telegram_token, chat_id=data.telegram_chat_id)
+        test_notifier.send_message("🟢 **Test Ping dari MIXA AI**\nKoneksi Telegram Anda berhasil terhubung dengan Dasbor!")
+        return {"message": "Test message sent successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class BacktestRequest(BaseModel):
+    symbol: str = "BTC/IDR"
+    timeframe: str = "15"
+    strategy: str = "MA Crossover"
+    initial_capital: float = 1000000.0
+    use_dca: bool = False
+    dca_max_orders: int = 3
+    dca_step_pct: float = 3.0
+    use_trailing_stop: bool = False
+    trailing_stop_pct: float = 2.0
+
+@app.post("/api/backtest")
+def run_backtest(req: BacktestRequest):
+    """Menjalankan simulasi Backtest pada 1000 candle terakhir (OHLCV)."""
+    try:
+        from exchange_handler import IndodaxHandler
+        handler = IndodaxHandler(api_key="", secret_key="", dry_run=True)
+        symbol_api = req.symbol.replace("/", "")
+        
+        # 1. Fetch data
+        df = handler.fetch_hidden_ohlcv(symbol=symbol_api, tf=req.timeframe, limit=1000)
+        if df.empty or len(df) < 60:
+            raise HTTPException(status_code=400, detail="Gagal menarik data atau data terlalu sedikit")
+            
+        # 2. Select Strategy
+        from strategy import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy
+        if req.strategy == "MA Crossover":
+            strat = MovingAverageStrategy()
+        elif req.strategy == "RSI Breakout":
+            strat = RSIBreakoutStrategy()
+        else:
+            strat = BollingerBandsStrategy()
+            
+        # 3. Simulation Loop
+        capital = req.initial_capital
+        balance = capital
+        coin_held = 0.0
+        entry_price = 0.0
+        highest_price = 0.0
+        dca_count = 0
+        total_invested = 0.0
+        trades = []
+        
+        for i in range(50, len(df)):
+            current_df = df.iloc[:i+1]
+            current_row = df.iloc[i]
+            current_price = current_row['close']
+            timestamp = current_row['timestamp']
+            
+            signal = strat.analyze(current_df)
+            
+            # Trailing Stop
+            if coin_held > 0 and req.use_trailing_stop:
+                if current_price > highest_price:
+                    highest_price = current_price
+                drop_pct = ((highest_price - current_price) / highest_price) * 100
+                if drop_pct >= req.trailing_stop_pct:
+                    signal = "SELL"
+                    
+            # DCA
+            if coin_held > 0 and signal != "SELL" and req.use_dca and dca_count < req.dca_max_orders:
+                pnl_pct = ((current_price - entry_price) / entry_price) * 100
+                drop_threshold = req.dca_step_pct * (dca_count + 1)
+                if pnl_pct <= -drop_threshold:
+                    dca_amount = balance * 0.5 # use 50% of remaining balance for DCA
+                    if dca_amount > 10000:
+                        balance -= dca_amount
+                        total_invested += dca_amount
+                        coin_held += dca_amount / current_price
+                        entry_price = total_invested / coin_held
+                        highest_price = entry_price
+                        dca_count += 1
+                        trades.append({"time": str(timestamp), "type": f"DCA #{dca_count}", "price": current_price, "amount": dca_amount, "pnl": None})
+                        
+            # Main Signals
+            if signal == "BUY" and coin_held == 0:
+                buy_amount = balance # All-in per trade for simple backtest
+                if buy_amount > 10000:
+                    balance -= buy_amount
+                    total_invested = buy_amount
+                    coin_held = buy_amount / current_price
+                    entry_price = current_price
+                    highest_price = current_price
+                    dca_count = 0
+                    trades.append({"time": str(timestamp), "type": "BUY", "price": current_price, "amount": buy_amount, "pnl": None})
+                    
+            elif signal == "SELL" and coin_held > 0:
+                sell_amount = coin_held * current_price
+                pnl_pct = ((current_price - entry_price) / entry_price) * 100
+                balance += sell_amount
+                coin_held = 0.0
+                trades.append({"time": str(timestamp), "type": "SELL", "price": current_price, "amount": sell_amount, "pnl": pnl_pct})
+                
+        # Force sell at end
+        if coin_held > 0:
+            current_price = df.iloc[-1]['close']
+            sell_amount = coin_held * current_price
+            pnl_pct = ((current_price - entry_price) / entry_price) * 100
+            balance += sell_amount
+            trades.append({"time": str(df.iloc[-1]['timestamp']), "type": "SELL (END)", "price": current_price, "amount": sell_amount, "pnl": pnl_pct})
+            
+        net_profit = balance - capital
+        net_profit_pct = (net_profit / capital) * 100
+        win_trades = len([t for t in trades if t.get('pnl') is not None and t['pnl'] > 0])
+        total_closed_trades = len([t for t in trades if t.get('pnl') is not None])
+        win_rate = (win_trades / total_closed_trades * 100) if total_closed_trades > 0 else 0.0
+        
+        return {
+            "initial_capital": capital,
+            "final_balance": balance,
+            "net_profit_pct": net_profit_pct,
+            "win_rate": win_rate,
+            "total_trades": total_closed_trades,
+            "trades": trades
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Backtest error: {str(e)}")
 
 class BotConfigUpdate(BaseModel):
     take_profit_pct: Optional[float] = None
