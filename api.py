@@ -234,7 +234,7 @@ def run_backtest(req: BacktestRequest):
         for i in range(50, len(df)):
             current_df = df.iloc[:i+1]
             current_row = df.iloc[i]
-            current_price = current_row['close']
+            current_price = float(current_row['close'])
             timestamp = current_row['timestamp']
             
             signal = strat.analyze(current_df)
@@ -252,52 +252,52 @@ def run_backtest(req: BacktestRequest):
                 pnl_pct = ((current_price - entry_price) / entry_price) * 100
                 drop_threshold = req.dca_step_pct * (dca_count + 1)
                 if pnl_pct <= -drop_threshold:
-                    dca_amount = balance * 0.5 # use 50% of remaining balance for DCA
+                    dca_amount = float(balance * 0.5) # use 50% of remaining balance for DCA
                     if dca_amount > 10000:
                         balance -= dca_amount
                         total_invested += dca_amount
-                        coin_held += dca_amount / current_price
-                        entry_price = total_invested / coin_held
+                        coin_held += float(dca_amount / current_price)
+                        entry_price = float(total_invested / coin_held)
                         highest_price = entry_price
                         dca_count += 1
                         trades.append({"time": str(timestamp), "type": f"DCA #{dca_count}", "price": current_price, "amount": dca_amount, "pnl": None})
                         
             # Main Signals
             if signal == "BUY" and coin_held == 0:
-                buy_amount = balance # All-in per trade for simple backtest
+                buy_amount = float(balance) # All-in per trade for simple backtest
                 if buy_amount > 10000:
                     balance -= buy_amount
                     total_invested = buy_amount
-                    coin_held = buy_amount / current_price
+                    coin_held = float(buy_amount / current_price)
                     entry_price = current_price
                     highest_price = current_price
                     dca_count = 0
                     trades.append({"time": str(timestamp), "type": "BUY", "price": current_price, "amount": buy_amount, "pnl": None})
                     
             elif signal == "SELL" and coin_held > 0:
-                sell_amount = coin_held * current_price
-                pnl_pct = ((current_price - entry_price) / entry_price) * 100
+                sell_amount = float(coin_held * current_price)
+                pnl_pct = float(((current_price - entry_price) / entry_price) * 100)
                 balance += sell_amount
                 coin_held = 0.0
                 trades.append({"time": str(timestamp), "type": "SELL", "price": current_price, "amount": sell_amount, "pnl": pnl_pct})
                 
         # Force sell at end
         if coin_held > 0:
-            current_price = df.iloc[-1]['close']
-            sell_amount = coin_held * current_price
-            pnl_pct = ((current_price - entry_price) / entry_price) * 100
+            current_price = float(df.iloc[-1]['close'])
+            sell_amount = float(coin_held * current_price)
+            pnl_pct = float(((current_price - entry_price) / entry_price) * 100)
             balance += sell_amount
             trades.append({"time": str(df.iloc[-1]['timestamp']), "type": "SELL (END)", "price": current_price, "amount": sell_amount, "pnl": pnl_pct})
             
-        net_profit = balance - capital
-        net_profit_pct = (net_profit / capital) * 100
+        net_profit = float(balance - capital)
+        net_profit_pct = float((net_profit / capital) * 100)
         win_trades = len([t for t in trades if t.get('pnl') is not None and t['pnl'] > 0])
         total_closed_trades = len([t for t in trades if t.get('pnl') is not None])
-        win_rate = (win_trades / total_closed_trades * 100) if total_closed_trades > 0 else 0.0
+        win_rate = float((win_trades / total_closed_trades * 100) if total_closed_trades > 0 else 0.0)
         
         return {
-            "initial_capital": capital,
-            "final_balance": balance,
+            "initial_capital": float(capital),
+            "final_balance": float(balance),
             "net_profit_pct": net_profit_pct,
             "win_rate": win_rate,
             "total_trades": total_closed_trades,
