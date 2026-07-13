@@ -132,24 +132,64 @@ def main():
                             
                             new_strategy = state.strategy
                             new_dca = getattr(state, 'use_dca', 0)
+                            new_tp = state.take_profit_pct
+                            new_sl = state.stop_loss_pct
+                            new_ts = getattr(state, 'use_trailing_stop', 0)
+                            new_droi = getattr(state, 'use_dynamic_roi', 0)
+                            new_wr = getattr(state, 'use_whale_radar', 0)
+                            new_tb = getattr(state, 'use_trailing_buy', 0)
                             note = ""
                             
                             if price < sma_200:
                                 new_strategy = "RSI Breakout"
                                 new_dca = 0
-                                note = "BEAR MARKET: Harga < SMA 200. Beralih ke RSI Breakout & Mematikan DCA."
+                                new_tp = 3.0  # Quick profit
+                                new_sl = 3.0  # Tight SL
+                                new_ts = 1    # Secure profits fast
+                                new_droi = 0
+                                new_wr = 1    # Catch dumps
+                                new_tb = 0
+                                note = "BEAR MARKET: Beralih ke RSI Breakout & Menyesuaikan semua Manajemen Risiko (Defensif)."
                             elif atr_pct < 1.0: # Volatilitas sangat rendah
                                 new_strategy = "Bollinger Bands"
-                                note = f"SIDEWAYS: Volatilitas ({atr_pct:.2f}%) rendah. Beralih ke Bollinger Bands."
+                                new_dca = 1
+                                new_tp = 1.5  # Scalping
+                                new_sl = 1.5  # Very tight SL
+                                new_ts = 0
+                                new_droi = 1
+                                new_wr = 0
+                                new_tb = 1    # Wait for small dips
+                                note = f"SIDEWAYS: Volatilitas ({atr_pct:.2f}%) rendah. Beralih ke Bollinger Bands & Menyesuaikan Manajemen Risiko (Scalping)."
                             elif price > sma_50:
                                 new_strategy = "MA Crossover"
                                 new_dca = 1
-                                note = "BULL MARKET: Harga > SMA 50. Beralih ke MA Crossover & Menyalakan DCA."
+                                new_tp = 10.0 # High profit
+                                new_sl = 5.0  # Wide SL
+                                new_ts = 1
+                                new_droi = 1
+                                new_wr = 1
+                                new_tb = 1
+                                note = "BULL MARKET: Beralih ke MA Crossover & Menyesuaikan Manajemen Risiko (Agresif)."
                             
                             changed = False
-                            if note and (new_strategy != state.strategy or new_dca != getattr(state, 'use_dca', 0)):
+                            if note and (
+                                new_strategy != state.strategy or 
+                                new_dca != getattr(state, 'use_dca', 0) or
+                                new_tp != state.take_profit_pct or
+                                new_sl != state.stop_loss_pct or
+                                new_ts != getattr(state, 'use_trailing_stop', 0) or
+                                new_droi != getattr(state, 'use_dynamic_roi', 0) or
+                                new_wr != getattr(state, 'use_whale_radar', 0) or
+                                new_tb != getattr(state, 'use_trailing_buy', 0)
+                            ):
                                 state.strategy = new_strategy
                                 state.use_dca = new_dca
+                                state.take_profit_pct = new_tp
+                                state.stop_loss_pct = new_sl
+                                state.use_trailing_stop = new_ts
+                                state.use_dynamic_roi = new_droi
+                                state.use_whale_radar = new_wr
+                                state.use_trailing_buy = new_tb
                                 changed = True
                                 
                                 notif = Notification(
