@@ -251,7 +251,7 @@ def main():
                         else:
                             logging.info(f"[{symbol_indodax}] Whale Radar Aman. Rasio Jual/Beli: {imbalance['ratio']:.2f}")
                     except Exception as e:
-                        logging.error(f"[{symbol_indodax}] Gagal mengecek Whale Radar: {e}")
+                        logging.warning(f"[{symbol_indodax}] Whale Radar dilewati sementara: {e}")
                         
                 # ==== PHASE 2: TRAILING BUY ====
                 if getattr(state, 'use_trailing_buy', 0) == 1 and (state.entry_price or 0.0) == 0.0:
@@ -446,10 +446,13 @@ def main():
                             # HITUNG PnL
                             current_entry = state.entry_price or 0.0
                             realized_pnl = None
+                            pnl_text = ""
                             if current_entry > 0:
                                 realized_pnl = ((current_price_idr - current_entry) / current_entry) * 100
+                                pnl_status = "✅ PROFIT" if realized_pnl > 0 else "❌ RUGI" if realized_pnl < 0 else "⚖️ BEP"
+                                pnl_text = f"\nHasil: {pnl_status} ({realized_pnl:.2f}%)"
                                 
-                            msg = f"🔴 **SINYAL JUAL!**\nTarget: {symbol_indodax}\nKoin Dijual: {amount_to_sell} {koin_utama}"
+                            msg = f"🔴 **SINYAL JUAL!**\nTarget: {symbol_indodax}\nKoin Dijual: {amount_to_sell} {koin_utama}{pnl_text}"
                             notifier.send_message(msg)
                             last_signals[symbol_indodax] = "SELL"
                             state.entry_price = 0.0
