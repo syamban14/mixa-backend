@@ -105,9 +105,9 @@ def remove_coin(symbol_path: str, token: str = Depends(verify_token)):
         if not existing:
             raise HTTPException(status_code=404, detail="Koin tidak ditemukan")
             
-        existing.is_active = 0
+        db.delete(existing)
         db.commit()
-        return {"message": f"Koin {symbol} dinonaktifkan"}
+        return {"message": f"Koin {symbol} dihapus permanen"}
     finally:
         db.close()
 
