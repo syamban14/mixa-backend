@@ -6,10 +6,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from exchange_handler import IndodaxHandler
-from strategy import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy
+from strategy import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy, GridTradingStrategy
 from notifier import TelegramNotifier
 from mixa_ai import MixaAI
 from database import init_db, BotState, TradeHistory, AppConfig, Notification
+from news_scraper import NewsScraper
 
 # Konfigurasi Catatan (Logging) agar tercetak di layar dan di file
 os.makedirs("logs", exist_ok=True)
@@ -36,6 +37,7 @@ def main():
     indodax_executor = IndodaxHandler(api_key=API_KEY, secret_key=SECRET_KEY, dry_run=DRY_RUN)
     notifier = TelegramNotifier(token=TELEGRAM_TOKEN, chat_id=TELEGRAM_CHAT_ID)
     mixa = MixaAI()
+    scraper = NewsScraper()
     
     # Inisialisasi Database (SQLite Engine)
     Session = init_db()
@@ -43,47 +45,36 @@ def main():
     status_mode = 'SIMULASI (DRY RUN)' if DRY_RUN else 'RIIL (UANG ASLI)'
     logging.info(f"Bot Multi-Koin dimulai. Mode: {status_mode}")
     
-    # === SEEDING DEFAULT COINS ===
-    ALL_SUPPORTED_COINS = ["BTC/IDR", "ETH/IDR", "SOL/IDR", "USDT/IDR", "XRP/IDR", "LRC/IDR", "DOGE/IDR", "PEPE/IDR"]
-    try:
-        db_session_init = Session()
-        
-        # 1. Hapus koin usang dari Database agar tidak muncul di Frontend
-        existing_states = db_session_init.query(BotState).all()
-        for state in existing_states:
-            if state.symbol not in ALL_SUPPORTED_COINS:
-                logging.info(f"Menghapus koin usang dari database: {state.symbol}")
-                db_session_init.delete(state)
-                
-        # 2. Tambahkan koin baru jika belum ada
-        for symbol in ALL_SUPPORTED_COINS:
-            state = db_session_init.query(BotState).filter_by(symbol=symbol).first()
-            if not state:
-                state = BotState(symbol=symbol, is_active=1)
-                db_session_init.add(state)
-        db_session_init.commit()
-    except Exception as e:
-        logging.error(f"Gagal seeding koin awal: {e}")
-    finally:
-        db_session_init.close()
-        
     notifier.send_message(f"🚀 **Bot Multi-Koin Aktif**\nMode: {status_mode}\nSistem Koin Dinamis Aktif")
 
     # === MEMORI SEMENTARA (RAM) ===
-    # Kita menggunakan ALL_SUPPORTED_COINS karena kita sudah memastikan Database sinkron
-    last_signals = {coin: "HOLD" for coin in ALL_SUPPORTED_COINS}
-    last_sell_times = {coin: 0.0 for coin in ALL_SUPPORTED_COINS}
+    last_buy_times = {}
+    last_mixa_times = {}
+    last_signals = {}
+    last_sell_times = {}
     
-    # Staggering: Koin 1 langsung panggil AI, Koin 2 tunggu 3 menit, Koin 3 tunggu 6 menit, dst.
-    current_t = time.time()
-    last_mixa_times = {coin: current_t - 900 + (i * 180) for i, coin in enumerate(ALL_SUPPORTED_COINS)}
-
+    # Cache berita
+    latest_news = []
+    last_news_time = 0.0
+    
     # (entry_prices dictionary sudah dihapus karena kita menggunakan state.entry_price langsung dari DB)
     
     # 3. Looping Utama Bot
     while True:
         try:
+            current_time_loop = time.time()
+            if current_time_loop - last_news_time > 1800: # Update setiap 30 menit
+                logging.info("Memperbarui cache sentimen berita global...")
+                latest_news = scraper.fetch_latest_news(limit=5)
+                last_news_time = current_time_loop
+                
             db_session = Session()
+            
+            # ==== SINKRONISASI PENGATURAN API KEY ====
+            api_conf = db_session.query(AppConfig).filter_by(key="INDODAX_API_KEY").first()
+            if api_conf and api_conf.value: indodax_executor.exchange.apiKey = api_conf.value
+            sec_conf = db_session.query(AppConfig).filter_by(key="INDODAX_SECRET_KEY").first()
+            if sec_conf and sec_conf.value: indodax_executor.exchange.secret = sec_conf.value
             
             # Ambil HANYA koin yang status is_active = 1 dari Database (Dinamis)
             active_states = db_session.query(BotState).filter_by(is_active=1).all()
@@ -183,10 +174,12 @@ def main():
                 
                 # ==== DYNAMIC STRATEGY ROUTING ====
                 strategy_name = state.strategy or "MA Crossover"
-                if strategy_name == "RSI Breakout":
-                    strategy = RSIBreakoutStrategy()
-                elif strategy_name == "Bollinger Bands":
-                    strategy = BollingerBandsStrategy()
+                if state.strategy == "RSI Breakout":
+                    strategy = RSIBreakoutStrategy(period=14)
+                elif state.strategy == "Bollinger Bands":
+                    strategy = BollingerBandsStrategy(period=20)
+                elif state.strategy == "Grid Trading":
+                    strategy = GridTradingStrategy(period=20)
                 else:
                     strategy = MovingAverageStrategy(fast_period=10, slow_period=50)
                     
@@ -440,15 +433,15 @@ def main():
                 
                 # Panggil MIXA AI setiap 15 menit per koin
                 current_time = time.time()
+                rsi_val = float(df.iloc[-1]['RSI_14']) if 'RSI_14' in df.columns else 50.0
+                
                 mixa_insight = ""
                 if current_time - last_mixa_times[symbol_indodax] >= 900:
                     logging.info(f"[{symbol_indodax}] Meminta analisis dari MIXA AI...")
-                    rsi_val = float(df.iloc[-1]['RSI_14']) if 'RSI_14' in df.columns else 50.0
+                    config_model = db_session.query(AppConfig).filter_by(key="GEMINI_MODEL").first()
+                    model_name = config_model.value if config_model else "gemini-2.5-flash"
                     
-                    config = db_session.query(AppConfig).filter_by(key="GEMINI_MODEL").first()
-                    model_name = config.value if config else "gemini-2.5-flash"
-                    
-                    mixa_insight = mixa.get_market_insight(current_price_idr, signal, rsi_val, model_name=model_name)
+                    mixa_insight = mixa.get_market_insight(current_price_idr, signal, rsi_val, model_name=model_name, news=latest_news)
                     last_mixa_times[symbol_indodax] = current_time
                     
                 # Siapkan data grafik untuk disimpan ke Database (Format JSON)

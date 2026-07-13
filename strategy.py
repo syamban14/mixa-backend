@@ -150,3 +150,36 @@ class BollingerBandsStrategy(BaseStrategy):
             return "SELL"
             
         return "HOLD"
+
+class GridTradingStrategy(BaseStrategy):
+    """
+    Strategi Grid Trading (Ping-Pong).
+    Membeli saat harga berada di area Support (titik terendah N-candle terakhir).
+    Menjual saat harga berada di area Resistance (titik tertinggi N-candle terakhir).
+    Sangat cocok untuk pasar sideways.
+    """
+    def __init__(self, period: int = 20):
+        self.period = period
+
+    def analyze(self, df: pd.DataFrame) -> str:
+        if df.empty or len(df) < self.period:
+            return "HOLD"
+            
+        df = df.copy()
+        
+        highest_high = df['high'].rolling(window=self.period).max()
+        lowest_low = df['low'].rolling(window=self.period).min()
+        
+        df = df.assign(HighestHigh=highest_high, LowestLow=lowest_low)
+        
+        last_row = df.iloc[-1]
+        
+        # Beli jika harga mendekati Lowest Low (Toleransi 0.5%)
+        if last_row['close'] <= last_row['LowestLow'] * 1.005:
+            return "BUY"
+            
+        # Jual jika harga mendekati Highest High (Toleransi 0.5%)
+        elif last_row['close'] >= last_row['HighestHigh'] * 0.995:
+            return "SELL"
+            
+        return "HOLD"

@@ -1,6 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import json
+import os
+import uuid
 from typing import Optional
 from pydantic import BaseModel
 from database import init_db, BotState, TradeHistory, AppConfig
@@ -24,8 +27,92 @@ Session = init_db()
 def read_root():
     return {"message": "AutoTrade FastAPI Server is Running 🚀"}
 
+security = HTTPBearer()
+
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    db = Session()
+    try:
+        db_token = db.query(AppConfig).filter_by(key="AUTH_TOKEN").first()
+        if not db_token or db_token.value != token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Sesi tidak valid atau telah berakhir. Silakan login kembali.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    finally:
+        db.close()
+    return token
+
+class LoginRequest(BaseModel):
+    password: str
+
+@app.post("/api/login")
+def login(req: LoginRequest):
+    admin_password = os.getenv("ADMIN_PASSWORD", "mixa2026")
+    if req.password != admin_password:
+        raise HTTPException(status_code=401, detail="Password salah")
+    
+    new_token = uuid.uuid4().hex
+    db = Session()
+    try:
+        token_conf = db.query(AppConfig).filter_by(key="AUTH_TOKEN").first()
+        if not token_conf:
+            token_conf = AppConfig(key="AUTH_TOKEN", value=new_token)
+            db.add(token_conf)
+        else:
+            token_conf.value = new_token
+        db.commit()
+    finally:
+        db.close()
+        
+    return {"token": new_token}
+
+class CoinAddRequest(BaseModel):
+    symbol: str
+
+@app.post("/api/coin")
+def add_coin(req: CoinAddRequest, token: str = Depends(verify_token)):
+    """Menambahkan koin baru ke dalam pantauan bot."""
+    db = Session()
+    try:
+        symbol = req.symbol.upper().strip()
+        if not symbol.endswith('/IDR'):
+            symbol += '/IDR'
+            
+        existing = db.query(BotState).filter_by(symbol=symbol).first()
+        if existing:
+            if not existing.is_active:
+                existing.is_active = 1
+                db.commit()
+                return {"message": f"Koin {symbol} diaktifkan kembali"}
+            raise HTTPException(status_code=400, detail=f"Koin {symbol} sudah ada dan aktif")
+            
+        new_state = BotState(symbol=symbol, is_active=1, signal="HOLD", mode="AUTO")
+        db.add(new_state)
+        db.commit()
+        return {"message": f"Koin {symbol} berhasil ditambahkan"}
+    finally:
+        db.close()
+
+@app.delete("/api/coin/{symbol_path:path}")
+def remove_coin(symbol_path: str, token: str = Depends(verify_token)):
+    """Menonaktifkan koin dari pantauan bot."""
+    db = Session()
+    try:
+        symbol = symbol_path.replace('%2F', '/')
+        existing = db.query(BotState).filter_by(symbol=symbol).first()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Koin tidak ditemukan")
+            
+        existing.is_active = 0
+        db.commit()
+        return {"message": f"Koin {symbol} dinonaktifkan"}
+    finally:
+        db.close()
+
 @app.get("/api/status")
-def get_bot_status():
+def get_bot_status(token: str = Depends(verify_token)):
     """Mengembalikan status terkini dari semua koin yang dipantau (Harga, Sinyal, Saldo, MIXA AI)."""
     db = Session()
     try:
@@ -69,7 +156,7 @@ def get_bot_status():
         db.close()
 
 @app.get("/api/history/{symbol_path:path}")
-def get_trade_history(symbol_path: str):
+def get_trade_history(symbol_path: str, token: str = Depends(verify_token)):
     """Mengembalikan riwayat transaksi (BUY/SELL) untuk koin tertentu (contoh: BTC/IDR)."""
     db = Session()
     try:
@@ -90,7 +177,7 @@ def get_trade_history(symbol_path: str):
         db.close()
 
 @app.get("/api/chart/{symbol_path:path}")
-def get_chart_data(symbol_path: str):
+def get_chart_data(symbol_path: str, token: str = Depends(verify_token)):
     """Mengembalikan array data Candlestick (termasuk Indikator) untuk di-render oleh Lightweight Charts."""
     db = Session()
     try:
@@ -103,70 +190,101 @@ def get_chart_data(symbol_path: str):
         db.close()
 
 class ConfigUpdate(BaseModel):
-    gemini_model: str
-    initial_balance: float = 0.0
-    telegram_token: str = ""
-    telegram_chat_id: str = ""
+    gemini_model: Optional[str] = None
+    initial_balance: Optional[float] = None
+    telegram_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+    indodax_api_key: Optional[str] = None
+    indodax_secret_key: Optional[str] = None
 
 @app.get("/api/config")
-def get_config():
+def get_config(token: str = Depends(verify_token)):
     """Mengembalikan konfigurasi sistem, termasuk model Gemini yang aktif dan Modal Awal."""
     db = Session()
     try:
-        config_model = db.query(AppConfig).filter_by(key="GEMINI_MODEL").first()
-        model_name = config_model.value if config_model else "gemini-2.5-flash"
-        
-        config_balance = db.query(AppConfig).filter_by(key="INITIAL_BALANCE").first()
-        initial_balance = float(config_balance.value) if config_balance else 0.0
-        
-        config_token = db.query(AppConfig).filter_by(key="TELEGRAM_TOKEN").first()
-        telegram_token = config_token.value if config_token else ""
-        
-        config_chat = db.query(AppConfig).filter_by(key="TELEGRAM_CHAT_ID").first()
-        telegram_chat_id = config_chat.value if config_chat else ""
-        
-        return {
-            "gemini_model": model_name, 
-            "initial_balance": initial_balance,
-            "telegram_token": telegram_token,
-            "telegram_chat_id": telegram_chat_id
+        configs = db.query(AppConfig).all()
+        result = {
+            "gemini_model": "gemini-2.5-flash",
+            "initial_balance": 0.0,
+            "telegram_token": "",
+            "telegram_chat_id": "",
+            "indodax_api_key": "",
+            "indodax_secret_key": ""
         }
+        for c in configs:
+            if c.key == "GEMINI_MODEL": result["gemini_model"] = c.value
+            elif c.key == "INITIAL_BALANCE": result["initial_balance"] = float(c.value) if c.value else 0.0
+            elif c.key == "TELEGRAM_BOT_TOKEN": result["telegram_token"] = c.value
+            elif c.key == "TELEGRAM_CHAT_ID": result["telegram_chat_id"] = c.value
+            elif c.key == "INDODAX_API_KEY": result["indodax_api_key"] = c.value
+            elif c.key == "INDODAX_SECRET_KEY": result["indodax_secret_key"] = c.value
+        return result
     finally:
         db.close()
 
 @app.post("/api/config")
-def update_config(data: ConfigUpdate):
+def update_config(data: ConfigUpdate, token: str = Depends(verify_token)):
     """Memperbarui konfigurasi sistem."""
     db = Session()
     try:
-        # Simpan Model
-        config_model = db.query(AppConfig).filter_by(key="GEMINI_MODEL").first()
-        if not config_model:
-            config_model = AppConfig(key="GEMINI_MODEL", value=data.gemini_model)
-            db.add(config_model)
-        else:
-            config_model.value = data.gemini_model
-            
-        # Simpan Initial Balance
-        config_balance = db.query(AppConfig).filter_by(key="INITIAL_BALANCE").first()
-        if not config_balance:
-            config_balance = AppConfig(key="INITIAL_BALANCE", value=str(data.initial_balance))
-            db.add(config_balance)
-        else:
-            config_balance.value = str(data.initial_balance)
-            
-        # Simpan Telegram Config
-        for key, val in [("TELEGRAM_TOKEN", data.telegram_token), ("TELEGRAM_CHAT_ID", data.telegram_chat_id)]:
-            if val is not None:
-                config_item = db.query(AppConfig).filter_by(key=key).first()
-                if not config_item:
-                    config_item = AppConfig(key=key, value=val)
-                    db.add(config_item)
+        def update_or_create(key, value):
+            if value is not None:
+                item = db.query(AppConfig).filter_by(key=key).first()
+                if not item:
+                    item = AppConfig(key=key, value=str(value))
+                    db.add(item)
                 else:
-                    config_item.value = val
-                    
+                    item.value = str(value)
+
+        update_or_create("GEMINI_MODEL", data.gemini_model)
+        update_or_create("INITIAL_BALANCE", data.initial_balance)
+        update_or_create("TELEGRAM_BOT_TOKEN", data.telegram_token)
+        update_or_create("TELEGRAM_CHAT_ID", data.telegram_chat_id)
+        update_or_create("INDODAX_API_KEY", data.indodax_api_key)
+        update_or_create("INDODAX_SECRET_KEY", data.indodax_secret_key)
+        
         db.commit()
-        return {"message": "Configuration updated successfully"}
+        return {"message": "Konfigurasi berhasil disimpan"}
+    finally:
+        db.close()
+
+@app.get("/api/performance")
+def get_performance(token: str = Depends(verify_token)):
+    """Mengembalikan data performa portofolio (PnL) untuk chart."""
+    db = Session()
+    try:
+        # Ambil semua history SELL yang memiliki pnl_pct
+        trades = db.query(TradeHistory).filter(TradeHistory.action == "SELL", TradeHistory.pnl_pct.isnot(None)).order_by(TradeHistory.timestamp.asc()).all()
+        
+        # Kelompokkan berdasarkan tanggal (YYYY-MM-DD)
+        daily_pnl = {}
+        for t in trades:
+            date_str = t.timestamp.strftime("%Y-%m-%d")
+            if date_str not in daily_pnl:
+                daily_pnl[date_str] = {'date': date_str, 'total_pnl_pct': 0.0, 'trade_count': 0, 'win_count': 0}
+            
+            daily_pnl[date_str]['total_pnl_pct'] += t.pnl_pct
+            daily_pnl[date_str]['trade_count'] += 1
+            if t.pnl_pct > 0:
+                daily_pnl[date_str]['win_count'] += 1
+                
+        # Konversi ke list yang terurut
+        daily_list = list(daily_pnl.values())
+        
+        # Hitung ringkasan total
+        total_trades = sum(d['trade_count'] for d in daily_list)
+        total_wins = sum(d['win_count'] for d in daily_list)
+        overall_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
+        overall_pnl = sum(d['total_pnl_pct'] for d in daily_list)
+        
+        return {
+            "daily_stats": daily_list,
+            "summary": {
+                "total_trades": total_trades,
+                "win_rate": overall_win_rate,
+                "overall_pnl_pct": overall_pnl
+            }
+        }
     finally:
         db.close()
 
@@ -175,7 +293,7 @@ class TelegramTest(BaseModel):
     telegram_chat_id: str
 
 @app.post("/api/config/telegram_test")
-def test_telegram(data: TelegramTest):
+def test_telegram(data: TelegramTest, token: str = Depends(verify_token)):
     """Mengirim pesan uji coba ke Telegram."""
     if not data.telegram_token or not data.telegram_chat_id:
         raise HTTPException(status_code=400, detail="Token dan Chat ID harus diisi")
@@ -200,7 +318,7 @@ class BacktestRequest(BaseModel):
     trailing_stop_pct: float = 2.0
 
 @app.post("/api/backtest")
-def run_backtest(req: BacktestRequest):
+def run_backtest(req: BacktestRequest, token: str = Depends(verify_token)):
     """Menjalankan simulasi Backtest pada 1000 candle terakhir (OHLCV)."""
     try:
         from exchange_handler import IndodaxHandler
@@ -213,13 +331,15 @@ def run_backtest(req: BacktestRequest):
             raise HTTPException(status_code=400, detail="Gagal menarik data atau data terlalu sedikit")
             
         # 2. Select Strategy
-        from strategy import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy
-        if req.strategy == "MA Crossover":
-            strat = MovingAverageStrategy()
-        elif req.strategy == "RSI Breakout":
+        from strategy import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy, GridTradingStrategy
+        if req.strategy == "RSI Breakout":
             strat = RSIBreakoutStrategy()
-        else:
+        elif req.strategy == "Bollinger Bands":
             strat = BollingerBandsStrategy()
+        elif req.strategy == "Grid Trading":
+            strat = GridTradingStrategy()
+        else:
+            strat = MovingAverageStrategy()
             
         # 3. Simulation Loop
         capital = req.initial_capital
@@ -336,7 +456,7 @@ class BotConfigUpdate(BaseModel):
     use_autotune: Optional[bool] = None
 
 @app.post("/api/bot-config/{symbol_path:path}")
-def update_bot_config(symbol_path: str, config: BotConfigUpdate):
+def update_bot_config(symbol_path: str, config: BotConfigUpdate, token: str = Depends(verify_token)):
     """Memperbarui pengaturan risiko (TP/SL) dan Strategi untuk koin tertentu."""
     db = Session()
     try:
@@ -415,7 +535,7 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate):
         db.close()
 
 @app.get("/api/logs")
-def get_system_logs():
+def get_system_logs(token: str = Depends(verify_token)):
     """Mengembalikan 200 baris terakhir dari log sistem (bot.log)."""
     import os
     log_file = "logs/bot.log"
@@ -431,7 +551,7 @@ def get_system_logs():
         return {"error": str(e)}
 
 @app.get("/api/notifications")
-def get_notifications():
+def get_notifications(token: str = Depends(verify_token)):
     """Mengambil notifikasi yang belum dibaca atau 20 notifikasi terbaru."""
     db = Session()
     try:
@@ -466,7 +586,7 @@ def get_notifications():
         db.close()
 
 @app.post("/api/notifications/read")
-def mark_notifications_read():
+def mark_notifications_read(token: str = Depends(verify_token)):
     """Menandai semua notifikasi sebagai sudah dibaca."""
     db = Session()
     try:

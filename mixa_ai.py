@@ -9,12 +9,14 @@ class MixaAI:
         self.api_key = os.getenv("GEMINI_API_KEY", "")
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent"
         
-    def get_market_insight(self, price: float, ma_signal: str, rsi: float, model_name: str = "gemini-2.5-flash") -> str:
-        """Mengirim data teknikal ke Google Gemini dan mengembalikan opini analisis dengan auto-retry."""
+    def get_market_insight(self, price: float, ma_signal: str, rsi: float, model_name: str = "gemini-2.5-flash", news: list = None) -> str:
+        """Mengirim data teknikal & berita ke Google Gemini dan mengembalikan opini analisis dengan auto-retry."""
         if not self.api_key:
             return "Kunci API Gemini tidak ditemukan di .env."
             
         url = f"{self.base_url.format(model_name)}?key={self.api_key}"
+        
+        news_str = "- " + "\n- ".join(news) if news else "Tidak ada berita penting."
         
         # Perintah (Prompt) untuk Gemini 2.5 Flash
         prompt = f"""
@@ -25,6 +27,9 @@ DATA TEKNIKAL SAAT INI:
 - Harga: Rp {price:,.0f}
 - Sinyal Moving Average (Tren): {ma_signal}
 - Level RSI (14): {rsi:.2f} (Ingat: <30 = Oversold, >70 = Overbought)
+
+BERITA TERKINI (JIKA ADA):
+{news_str}
 
 TUGAS:
 Berikan analisis pasar yang tajam, futuristik, dan sangat ringkas (maksimal 2 kalimat pendek). 

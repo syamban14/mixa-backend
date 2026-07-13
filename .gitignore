@@ -9,3 +9,10 @@ trading.db
 # Ignore virtual environments
 env/
 venv/
+
+# System & Local Files
+.DS_Store
+*.db
+test_orders.py
+logs/
+data/
