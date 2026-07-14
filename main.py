@@ -452,7 +452,7 @@ def main():
                                 pnl_status = "✅ PROFIT" if realized_pnl > 0 else "❌ RUGI" if realized_pnl < 0 else "⚖️ BEP"
                                 pnl_text = f"\nHasil: {pnl_status} ({realized_pnl:.2f}%)"
                                 
-                            msg = f"🔴 **SINYAL JUAL!**\nTarget: {symbol_indodax}\nKoin Dijual: {amount_to_sell} {koin_utama}{pnl_text}"
+                            msg = f"🔴 **SINYAL JUAL!**\nTarget: {symbol_indodax}\nKoin Dijual: {amount_to_sell} {koin_utama}{pnl_text}\n⏱️ Koin masuk masa Rehat Beli (Cooldown) selama {COOLDOWN_HOURS} Jam."
                             notifier.send_message(msg)
                             last_signals[symbol_indodax] = "SELL"
                             state.entry_price = 0.0

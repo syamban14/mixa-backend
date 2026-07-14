@@ -116,9 +116,19 @@ def get_bot_status(token: str = Depends(verify_token)):
     """Mengembalikan status terkini dari semua koin yang dipantau (Harga, Sinyal, Saldo, MIXA AI)."""
     db = Session()
     try:
+        from database import get_wib_time
+        import os
+        cooldown_hours = float(os.getenv('COOLDOWN_HOURS', 2.0))
         states = db.query(BotState).all()
         result = []
         for state in states:
+            cooldown_remaining_minutes = 0
+            last_sell = db.query(TradeHistory).filter(TradeHistory.symbol == state.symbol, TradeHistory.action == "SELL").order_by(TradeHistory.timestamp.desc()).first()
+            if last_sell and last_sell.timestamp:
+                elapsed = (get_wib_time() - last_sell.timestamp).total_seconds()
+                if elapsed < cooldown_hours * 3600:
+                    cooldown_remaining_minutes = int((cooldown_hours * 3600 - elapsed) / 60)
+            
             result.append({
                 "symbol": state.symbol,
                 "current_price": state.current_price,

@@ -232,5 +232,8 @@ class IndodaxHandler:
                 "ratio": ratio
             }
         except Exception as e:
-            logging.error(f"Gagal mengambil orderbook untuk {symbol}: {e}")
+            if "403" in str(e) or "Forbidden" in str(e):
+                logging.warning(f"[{symbol}] Cloudflare memblokir akses ke Orderbook Publik. Whale Radar dilewati sementara (Ini AMAN dan tidak memblokir akun Anda).")
+            else:
+                logging.warning(f"[{symbol}] Gagal mengambil orderbook untuk Whale Radar: {e}. Dilewati sementara.")
             return {"bid_vol": 0, "ask_vol": 0, "ratio": 1.0}
