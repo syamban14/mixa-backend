@@ -1,6 +1,19 @@
 version: '3.8'
 
 services:
+  mixa-db:
+    image: postgres:15-alpine
+    container_name: mixa-db
+    restart: always
+    environment:
+      POSTGRES_USER: mixa
+      POSTGRES_PASSWORD: mixapassword123
+      POSTGRES_DB: mixa_trading
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - mixa_net
+
   mixa-backend:
     image: ghcr.io/syamban14/mixa-backend:latest
     container_name: mixa-backend
@@ -14,6 +27,9 @@ services:
     restart: always
     environment:
       - TZ=Asia/Jakarta
+      - DATABASE_URL=postgresql+psycopg2://mixa:mixapassword123@mixa-db:5432/mixa_trading
+    depends_on:
+      - mixa-db
 
   mixa-frontend:
     image: ghcr.io/syamban14/mixa-frontend:latest
@@ -29,3 +45,6 @@ services:
 networks:
   mixa_net:
     driver: bridge
+
+volumes:
+  pgdata:

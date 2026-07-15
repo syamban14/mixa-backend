@@ -76,7 +76,22 @@ class TradeHistory(Base):
 def init_db(db_url="sqlite:///data/trading.db"):
     """Inisialisasi koneksi Database. Bisa baca dari .env jika kelak pindah ke PostgreSQL."""
     os.makedirs("data", exist_ok=True)
+    
+    # 1. AUTO BACKUP SQLITE SEBELUM NGAPA-NGAPAIN
+    sqlite_path = "data/trading.db"
+    backup_path = "data/trading.db.bak"
+    if os.path.exists(sqlite_path) and not os.path.exists(backup_path):
+        import shutil
+        import logging
+        try:
+            shutil.copy2(sqlite_path, backup_path)
+            logging.info(f"Berhasil membuat backup database lokal ke {backup_path}")
+        except Exception as e:
+            logging.error(f"Gagal membackup database: {e}")
+
     url = os.getenv("DATABASE_URL", db_url)
+    is_postgres = url.startswith("postgres")
+    
     # Jika menggunakan sqlite, tambahkan parameter khusus agar aman untuk multi-thread
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
     
@@ -197,4 +212,51 @@ def init_db(db_url="sqlite:///data/trading.db"):
                 pass
                 
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    
+    # 2. SEAMLESS CROSS-DATABASE MIGRATION (SQLite -> PostgreSQL)
+    if is_postgres:
+        import logging
+        pg_session = SessionLocal()
+        # Cek apakah PostgreSQL kosong (belum ada config/bot)
+        if pg_session.query(AppConfig).count() == 0 and pg_session.query(BotState).count() == 0:
+            if os.path.exists(sqlite_path):
+                logging.info("Memulai migrasi otomatis dari SQLite ke PostgreSQL...")
+                try:
+                    sqlite_engine = create_engine(f"sqlite:///{sqlite_path}")
+                    SqliteSessionLocal = sessionmaker(bind=sqlite_engine)
+                    sqlite_session = SqliteSessionLocal()
+                    
+                    # Migrasi AppConfig
+                    for row in sqlite_session.query(AppConfig).all():
+                        pg_session.add(AppConfig(key=row.key, value=row.value))
+                    
+                    # Migrasi BotState
+                    for row in sqlite_session.query(BotState).all():
+                        state_dict = row.__dict__.copy()
+                        state_dict.pop('_sa_instance_state', None)
+                        pg_session.add(BotState(**state_dict))
+                        
+                    # Migrasi TradeHistory
+                    for row in sqlite_session.query(TradeHistory).all():
+                        hist_dict = row.__dict__.copy()
+                        hist_dict.pop('_sa_instance_state', None)
+                        hist_dict.pop('id', None) # Biarkan postgres auto increment
+                        pg_session.add(TradeHistory(**hist_dict))
+                        
+                    # Migrasi Notification
+                    for row in sqlite_session.query(Notification).all():
+                        notif_dict = row.__dict__.copy()
+                        notif_dict.pop('_sa_instance_state', None)
+                        notif_dict.pop('id', None)
+                        pg_session.add(Notification(**notif_dict))
+                        
+                    pg_session.commit()
+                    logging.info("Migrasi data ke PostgreSQL berhasil 100%!")
+                except Exception as e:
+                    logging.error(f"Gagal melakukan migrasi ke PostgreSQL: {e}")
+                    pg_session.rollback()
+                finally:
+                    sqlite_session.close()
+        pg_session.close()
+
     return SessionLocal
