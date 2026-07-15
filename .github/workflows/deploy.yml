@@ -58,8 +58,8 @@ jobs:
             # Pindah ke direktori project di server
             cd /home/syamban/mixa_trading
             
-            # Tarik pembaruan file (seperti docker-compose.yml) dari GitHub
-            git pull origin master
+            # Unduh docker-compose.yml terbaru langsung dari GitHub (tanpa perlu Git)
+            wget -qO docker-compose.yml https://raw.githubusercontent.com/syamban14/mixa-backend/master/docker-compose.yml
             
             # Nyalakan dan perbarui semua container (termasuk mixa-db/Postgres)
             docker-compose up -d --force-recreate
