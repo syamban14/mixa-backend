@@ -6,7 +6,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from exchange_handler import IndodaxHandler
-from strategies import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy, GridTradingStrategy
+from strategy import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy, GridTradingStrategy
 from database import init_db, BotState, TradeHistory, AppConfig, Notification
 from news_scraper import NewsScraper
 from screener import run_auto_screener
