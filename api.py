@@ -206,6 +206,7 @@ class ConfigUpdate(BaseModel):
     telegram_chat_id: Optional[str] = None
     indodax_api_key: Optional[str] = None
     indodax_secret_key: Optional[str] = None
+    auto_screener_enabled: Optional[bool] = None
 
 @app.get("/api/config")
 def get_config(token: str = Depends(verify_token)):
@@ -219,7 +220,8 @@ def get_config(token: str = Depends(verify_token)):
             "telegram_token": "",
             "telegram_chat_id": "",
             "indodax_api_key": "",
-            "indodax_secret_key": ""
+            "indodax_secret_key": "",
+            "auto_screener_enabled": False
         }
         for c in configs:
             if c.key == "GEMINI_MODEL": result["gemini_model"] = c.value
@@ -228,6 +230,7 @@ def get_config(token: str = Depends(verify_token)):
             elif c.key == "TELEGRAM_CHAT_ID": result["telegram_chat_id"] = c.value
             elif c.key == "INDODAX_API_KEY": result["indodax_api_key"] = c.value
             elif c.key == "INDODAX_SECRET_KEY": result["indodax_secret_key"] = c.value
+            elif c.key == "AUTO_SCREENER_ENABLED": result["auto_screener_enabled"] = (c.value.lower() == 'true')
         return result
     finally:
         db.close()
@@ -252,6 +255,8 @@ def update_config(data: ConfigUpdate, token: str = Depends(verify_token)):
         update_or_create("TELEGRAM_CHAT_ID", data.telegram_chat_id)
         update_or_create("INDODAX_API_KEY", data.indodax_api_key)
         update_or_create("INDODAX_SECRET_KEY", data.indodax_secret_key)
+        if data.auto_screener_enabled is not None:
+            update_or_create("AUTO_SCREENER_ENABLED", str(data.auto_screener_enabled))
         
         db.commit()
         return {"message": "Konfigurasi berhasil disimpan"}

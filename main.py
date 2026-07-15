@@ -6,11 +6,12 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from exchange_handler import IndodaxHandler
-from strategy import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy, GridTradingStrategy
-from notifier import TelegramNotifier
-from mixa_ai import MixaAI
+from strategies import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy, GridTradingStrategy
 from database import init_db, BotState, TradeHistory, AppConfig, Notification
 from news_scraper import NewsScraper
+from screener import run_auto_screener
+from notifier import TelegramNotifier
+from mixa_ai import MixaAI
 
 # Konfigurasi Catatan (Logging) agar tercetak di layar dan di file
 os.makedirs("logs", exist_ok=True)
@@ -53,13 +54,11 @@ def main():
     last_signals = {}
     last_sell_times = {}
     
-    # Cache berita
+    last_news_time = 0
+    last_screener_time = 0
     latest_news = []
-    last_news_time = 0.0
     
-    # (entry_prices dictionary sudah dihapus karena kita menggunakan state.entry_price langsung dari DB)
-    
-    # 3. Looping Utama Bot
+    logging.info("Bot siap dan mulai berjalan...")
     while True:
         try:
             current_time_loop = time.time()
@@ -70,6 +69,15 @@ def main():
                 
             db_session = Session()
             
+            # ==== AUTO SCREENER LOGIC ====
+            screener_conf = db_session.query(AppConfig).filter_by(key="AUTO_SCREENER_ENABLED").first()
+            is_screener_enabled = (screener_conf and screener_conf.value.lower() == 'true')
+            
+            # Jalankan setiap 3600 detik (1 jam)
+            if is_screener_enabled and (current_time_loop - last_screener_time > 3600):
+                run_auto_screener(indodax_executor, max_active_coins=5)
+                last_screener_time = current_time_loop
+                
             # ==== SINKRONISASI PENGATURAN API KEY ====
             api_conf = db_session.query(AppConfig).filter_by(key="INDODAX_API_KEY").first()
             if api_conf and api_conf.value: indodax_executor.exchange.apiKey = api_conf.value
