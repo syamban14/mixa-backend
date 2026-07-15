@@ -96,7 +96,21 @@ def init_db(db_url="sqlite:///data/trading.db"):
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
     
     engine = create_engine(url, connect_args=connect_args, echo=False)
-    Base.metadata.create_all(engine)
+    
+    import time
+    import logging
+    max_retries = 10
+    for attempt in range(max_retries):
+        try:
+            Base.metadata.create_all(engine)
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logging.warning(f"Menunggu database siap (percobaan {attempt+1}/{max_retries})...")
+                time.sleep(3)
+            else:
+                logging.error("Gagal terhubung ke database setelah beberapa kali percobaan.")
+                raise e
     
     # Auto-Migration untuk SQLite (Jika update versi)
     if url.startswith("sqlite"):

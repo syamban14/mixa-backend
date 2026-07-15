@@ -1,15 +1,14 @@
 import logging
-from database import Session, BotState
+from database import BotState
 from exchange_handler import IndodaxHandler
 
-def run_auto_screener(indodax_executor: IndodaxHandler, max_active_coins: int = 5):
+def run_auto_screener(indodax_executor: IndodaxHandler, db, max_active_coins: int = 5):
     """
     Menjalankan AI Autopilot Screener:
     1. Prune: Menghapus koin yang tidak aktif (saldo 0, tidak ada open orders, performa buruk).
     2. Add: Menambahkan koin baru yang sedang trending di Indodax.
     """
     logging.info("[SCREENER] Memulai proses Auto-Screener...")
-    db = Session()
     try:
         # 1. PRUNE (Bersihkan Koin Tidak Aktif)
         active_states = db.query(BotState).filter_by(is_active=1).all()
@@ -110,5 +109,3 @@ def run_auto_screener(indodax_executor: IndodaxHandler, max_active_coins: int = 
         
     except Exception as e:
         logging.error(f"[SCREENER] Error: {e}")
-    finally:
-        db.close()

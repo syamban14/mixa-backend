@@ -75,7 +75,7 @@ def main():
             
             # Jalankan setiap 3600 detik (1 jam)
             if is_screener_enabled and (current_time_loop - last_screener_time > 3600):
-                run_auto_screener(indodax_executor, max_active_coins=5)
+                run_auto_screener(indodax_executor, db_session, max_active_coins=5)
                 last_screener_time = current_time_loop
                 
             # ==== SINKRONISASI PENGATURAN API KEY ====
