@@ -412,6 +412,8 @@ def main():
 
                 if signal == "BUY" and last_signals[symbol_indodax] != "BUY":
                     if idr_bal >= coin_buy_amount or DRY_RUN:
+                        indodax_executor.cancel_all_open_orders(symbol_indodax) # BERSIHKAN ORDER NYANGKUT
+                        time.sleep(1) # Tunggu Indodax merilis saldo
                         order = indodax_executor.place_buy_order(symbol_indodax, coin_buy_amount)
                         
                         if order: # Validasi Ganda: Order benar-benar sukses di Indodax
@@ -439,6 +441,13 @@ def main():
                 elif signal == "SELL" and last_signals[symbol_indodax] != "SELL":
                     # Filter Receh: Batas minimal Indodax adalah Rp 10.000
                     if estimated_value_idr >= 10000 or DRY_RUN:
+                        indodax_executor.cancel_all_open_orders(symbol_indodax) # BERSIHKAN ORDER NYANGKUT
+                        time.sleep(1) # Tunggu Indodax merilis saldo koin
+                        
+                        # Fetch saldo terbaru setelah cancel order
+                        balances = indodax_executor.get_balance()
+                        asset_bal = balances.get(koin_utama, 0)
+                        
                         amount_to_sell = 0.001 if DRY_RUN else asset_bal 
                         order = indodax_executor.place_sell_order(symbol_indodax, amount_to_sell)
                         

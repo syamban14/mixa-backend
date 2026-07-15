@@ -190,6 +190,18 @@ class IndodaxHandler:
             # agar bot tidak langsung menghapus memori harga beli.
             return True
 
+    def cancel_all_open_orders(self, symbol: str):
+        """Membatalkan semua open order (stuck Limit Order) untuk koin tertentu agar IDR/Koin tidak tertahan."""
+        if self.dry_run:
+            return
+        try:
+            open_orders = self.exchange.fetch_open_orders(symbol)
+            for order in open_orders:
+                logging.info(f"Membatalkan order {symbol} yang menggantung: ID {order['id']}")
+                self.exchange.cancel_order(order['id'], symbol)
+        except Exception as e:
+            logging.error(f"Gagal membatalkan open orders untuk {symbol}: {e}")
+
     def get_orderbook_imbalance(self, symbol: str, depth_pct: float = 2.0) -> dict:
         """
         Membaca buku pesanan (orderbook) untuk mendeteksi tembok jual raksasa (Sell Wall).
