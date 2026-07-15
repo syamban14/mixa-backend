@@ -246,8 +246,16 @@ def init_db(db_url="sqlite:///data/trading.db"):
     if is_postgres:
         import logging
         pg_session = SessionLocal()
-        # Cek apakah PostgreSQL kosong (belum ada config/bot)
-        if pg_session.query(AppConfig).count() == 0 and pg_session.query(BotState).count() == 0:
+        # Cek apakah PostgreSQL kosong menggunakan RAW SQL agar tidak crash jika skema ORM belum diupdate
+        from sqlalchemy import text
+        try:
+            config_count = pg_session.execute(text("SELECT count(*) FROM app_config")).scalar()
+            bot_count = pg_session.execute(text("SELECT count(*) FROM bot_state")).scalar()
+        except Exception:
+            config_count, bot_count = 0, 0
+            pg_session.rollback()
+            
+        if config_count == 0 and bot_count == 0:
             if os.path.exists(sqlite_path):
                 logging.info("Memulai migrasi otomatis dari SQLite ke PostgreSQL...")
                 try:
