@@ -64,5 +64,9 @@ jobs:
             # Nyalakan dan perbarui semua container (termasuk mixa-db/Postgres)
             docker-compose up -d --force-recreate
             
+            # Beri waktu 5 detik agar backend siap, lalu jalankan skrip migrasi database SaaS
+            sleep 5
+            docker exec mixa-backend python migrate_saas.py
+            
             # Hapus image lama
             docker image prune -f

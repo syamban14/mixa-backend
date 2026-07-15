@@ -9,9 +9,21 @@ def get_wib_time():
     """Mengembalikan waktu saat ini dalam zona waktu WIB (UTC+7)"""
     return datetime.datetime.utcnow() + datetime.timedelta(hours=7)
 
+# Tabel User (SaaS)
+class User(Base):
+    __tablename__ = 'users'
+    email = Column(String, primary_key=True) # Gunakan Email sebagai Primary Key untuk kemudahan integrasi Google
+    name = Column(String)
+    picture = Column(String)
+    created_at = Column(DateTime, default=get_wib_time)
+    trial_ends_at = Column(DateTime)
+    subscription_ends_at = Column(DateTime)
+    is_active = Column(Integer, default=1)
+
 # Tabel Status Terkini Bot (Diperbarui Setiap Siklus)
 class BotState(Base):
     __tablename__ = 'bot_state'
+    user_id = Column(String, primary_key=True, default='admin@mixa.ai')
     symbol = Column(String, primary_key=True)
     current_price = Column(Float)
     signal = Column(String)
@@ -50,6 +62,7 @@ class BotState(Base):
 # Tabel Konfigurasi Aplikasi (Key-Value)
 class AppConfig(Base):
     __tablename__ = 'app_config'
+    user_id = Column(String, primary_key=True, default='admin@mixa.ai')
     key = Column(String, primary_key=True)
     value = Column(String)
 
@@ -58,6 +71,7 @@ class Notification(Base):
     __tablename__ = 'notifications'
     
     id = Column(Integer, primary_key=True)
+    user_id = Column(String, index=True, default='admin@mixa.ai')
     message = Column(String, nullable=False)
     type = Column(String, default='info') # info, warning, success, error
     timestamp = Column(DateTime, default=get_wib_time)
@@ -66,6 +80,7 @@ class Notification(Base):
 class TradeHistory(Base):
     __tablename__ = 'trade_history'
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, index=True, default='admin@mixa.ai')
     symbol = Column(String, index=True)
     action = Column(String) # BUY atau SELL
     price = Column(Float)
