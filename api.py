@@ -4,83 +4,142 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import json
 import os
 import uuid
+import jwt
+from datetime import datetime, timedelta
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
 from typing import Optional
 from pydantic import BaseModel
-from database import init_db, BotState, TradeHistory, AppConfig
+from database import init_db, BotState, TradeHistory, AppConfig, User, Notification
 
-app = FastAPI(title="Indodax AutoTrade API")
+app = FastAPI(title="Indodax AutoTrade API (SaaS Edition)")
 
-# Konfigurasi CORS (Cross-Origin Resource Sharing)
-# Mengizinkan Frontend Svelte (port 5173) untuk meminta data ke Backend FastAPI (port 8000)
+# Konfigurasi CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Mengizinkan semua origin untuk kemudahan pengembangan
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Inisialisasi Database
 Session = init_db()
-
-@app.get("/")
-def read_root():
-    return {"message": "AutoTrade FastAPI Server is Running 🚀"}
-
 security = HTTPBearer()
+
+JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-mixa-key-2026")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(days=7)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, JWT_SECRET, algorithm="HS256")
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
-    db = Session()
     try:
-        db_token = db.query(AppConfig).filter_by(key="AUTH_TOKEN").first()
-        if not db_token or db_token.value != token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sesi tidak valid atau telah berakhir. Silakan login kembali.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    finally:
-        db.close()
-    return token
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        user_id = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="Token tidak valid")
+        return user_id
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token kedaluwarsa")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token tidak valid")
+
+@app.get("/")
+def read_root():
+    return {"message": "AutoTrade SaaS FastAPI Server is Running 🚀"}
+
+class GoogleLoginRequest(BaseModel):
+    credential: str
+
+@app.post("/api/auth/google")
+def google_login(req: GoogleLoginRequest):
+    try:
+        # Jika GOOGLE_CLIENT_ID kosong, lewati verifikasi audiens untuk sementara (Dev Mode)
+        if not GOOGLE_CLIENT_ID:
+            idinfo = id_token.verify_oauth2_token(req.credential, google_requests.Request())
+        else:
+            idinfo = id_token.verify_oauth2_token(req.credential, google_requests.Request(), GOOGLE_CLIENT_ID)
+            
+        email = idinfo['email']
+        name = idinfo.get('name', '')
+        picture = idinfo.get('picture', '')
+        
+        db = Session()
+        try:
+            user = db.query(User).filter_by(email=email).first()
+            if not user:
+                # User baru, beri trial 30 hari
+                from database import get_wib_time
+                trial_end = get_wib_time() + timedelta(days=30)
+                user = User(email=email, name=name, picture=picture, trial_ends_at=trial_end)
+                db.add(user)
+                
+                # Setup default config
+                default_configs = [
+                    AppConfig(user_id=email, key="GEMINI_MODEL", value="gemini-2.5-flash"),
+                    AppConfig(user_id=email, key="AUTO_SCREENER_ENABLED", value="False")
+                ]
+                db.add_all(default_configs)
+            else:
+                user.name = name
+                user.picture = picture
+            db.commit()
+            
+            # Cek status berlangganan/trial
+            from database import get_wib_time
+            now = get_wib_time()
+            has_access = False
+            if user.subscription_ends_at and user.subscription_ends_at > now:
+                has_access = True
+            elif user.trial_ends_at and user.trial_ends_at > now:
+                has_access = True
+                
+            token = create_access_token({"sub": email})
+            return {
+                "token": token,
+                "user": {
+                    "email": email,
+                    "name": name,
+                    "picture": picture,
+                    "has_access": has_access,
+                    "trial_ends_at": user.trial_ends_at.isoformat() if user.trial_ends_at else None,
+                    "subscription_ends_at": user.subscription_ends_at.isoformat() if user.subscription_ends_at else None
+                }
+            }
+        finally:
+            db.close()
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"Token Google tidak valid: {e}")
 
 class LoginRequest(BaseModel):
     password: str
 
 @app.post("/api/login")
 def login(req: LoginRequest):
+    # Backward compatibility untuk admin login tanpa Google
     admin_password = os.getenv("ADMIN_PASSWORD", "mixa2026")
     if req.password != admin_password:
         raise HTTPException(status_code=401, detail="Password salah")
     
-    new_token = uuid.uuid4().hex
-    db = Session()
-    try:
-        token_conf = db.query(AppConfig).filter_by(key="AUTH_TOKEN").first()
-        if not token_conf:
-            token_conf = AppConfig(key="AUTH_TOKEN", value=new_token)
-            db.add(token_conf)
-        else:
-            token_conf.value = new_token
-        db.commit()
-    finally:
-        db.close()
-        
-    return {"token": new_token}
+    token = create_access_token({"sub": "admin@mixa.ai"})
+    return {"token": token, "user": {"email": "admin@mixa.ai", "name": "Admin", "has_access": True}}
 
 class CoinAddRequest(BaseModel):
     symbol: str
 
 @app.post("/api/coin")
-def add_coin(req: CoinAddRequest, token: str = Depends(verify_token)):
-    """Menambahkan koin baru ke dalam pantauan bot."""
+def add_coin(req: CoinAddRequest, user_id: str = Depends(verify_token)):
     db = Session()
     try:
         symbol = req.symbol.upper().strip()
         if not symbol.endswith('/IDR'):
             symbol += '/IDR'
             
-        existing = db.query(BotState).filter_by(symbol=symbol).first()
+        existing = db.query(BotState).filter_by(user_id=user_id, symbol=symbol).first()
         if existing:
             if not existing.is_active:
                 existing.is_active = 1
@@ -88,7 +147,7 @@ def add_coin(req: CoinAddRequest, token: str = Depends(verify_token)):
                 return {"message": f"Koin {symbol} diaktifkan kembali"}
             raise HTTPException(status_code=400, detail=f"Koin {symbol} sudah ada dan aktif")
             
-        new_state = BotState(symbol=symbol, is_active=1, signal="HOLD", mode="AUTO")
+        new_state = BotState(user_id=user_id, symbol=symbol, is_active=1, signal="HOLD", mode="AUTO")
         db.add(new_state)
         db.commit()
         return {"message": f"Koin {symbol} berhasil ditambahkan"}
@@ -96,12 +155,11 @@ def add_coin(req: CoinAddRequest, token: str = Depends(verify_token)):
         db.close()
 
 @app.delete("/api/coin/{symbol_path:path}")
-def remove_coin(symbol_path: str, token: str = Depends(verify_token)):
-    """Menonaktifkan koin dari pantauan bot."""
+def remove_coin(symbol_path: str, user_id: str = Depends(verify_token)):
     db = Session()
     try:
         symbol = symbol_path.replace('%2F', '/')
-        existing = db.query(BotState).filter_by(symbol=symbol).first()
+        existing = db.query(BotState).filter_by(user_id=user_id, symbol=symbol).first()
         if not existing:
             raise HTTPException(status_code=404, detail="Koin tidak ditemukan")
             
@@ -112,18 +170,17 @@ def remove_coin(symbol_path: str, token: str = Depends(verify_token)):
         db.close()
 
 @app.get("/api/status")
-def get_bot_status(token: str = Depends(verify_token)):
-    """Mengembalikan status terkini dari semua koin yang dipantau (Harga, Sinyal, Saldo, MIXA AI)."""
+def get_bot_status(user_id: str = Depends(verify_token)):
     db = Session()
     try:
         from database import get_wib_time
         import os
         cooldown_hours = float(os.getenv('COOLDOWN_HOURS', 2.0))
-        states = db.query(BotState).all()
+        states = db.query(BotState).filter_by(user_id=user_id).all()
         result = []
         for state in states:
             cooldown_remaining_minutes = 0
-            last_sell = db.query(TradeHistory).filter(TradeHistory.symbol == state.symbol, TradeHistory.action == "SELL").order_by(TradeHistory.timestamp.desc()).first()
+            last_sell = db.query(TradeHistory).filter(TradeHistory.user_id == user_id, TradeHistory.symbol == state.symbol, TradeHistory.action == "SELL").order_by(TradeHistory.timestamp.desc()).first()
             if last_sell and last_sell.timestamp:
                 elapsed = (get_wib_time() - last_sell.timestamp).total_seconds()
                 if elapsed < cooldown_hours * 3600:
@@ -166,11 +223,10 @@ def get_bot_status(token: str = Depends(verify_token)):
         db.close()
 
 @app.get("/api/history/{symbol_path:path}")
-def get_trade_history(symbol_path: str, token: str = Depends(verify_token)):
-    """Mengembalikan riwayat transaksi (BUY/SELL) untuk koin tertentu (contoh: BTC/IDR)."""
+def get_trade_history(symbol_path: str, user_id: str = Depends(verify_token)):
     db = Session()
     try:
-        history = db.query(TradeHistory).filter_by(symbol=symbol_path).order_by(TradeHistory.timestamp.desc()).all()
+        history = db.query(TradeHistory).filter_by(user_id=user_id, symbol=symbol_path).order_by(TradeHistory.timestamp.desc()).all()
         result = []
         for h in history:
             result.append({
@@ -187,14 +243,12 @@ def get_trade_history(symbol_path: str, token: str = Depends(verify_token)):
         db.close()
 
 @app.get("/api/chart/{symbol_path:path}")
-def get_chart_data(symbol_path: str, token: str = Depends(verify_token)):
-    """Mengembalikan array data Candlestick (termasuk Indikator) untuk di-render oleh Lightweight Charts."""
+def get_chart_data(symbol_path: str, user_id: str = Depends(verify_token)):
     db = Session()
     try:
-        state = db.query(BotState).filter_by(symbol=symbol_path).first()
+        state = db.query(BotState).filter_by(user_id=user_id, symbol=symbol_path).first()
         if not state or not state.chart_data:
             return []
-        
         return json.loads(state.chart_data)
     finally:
         db.close()
@@ -209,11 +263,10 @@ class ConfigUpdate(BaseModel):
     auto_screener_enabled: Optional[bool] = None
 
 @app.get("/api/config")
-def get_config(token: str = Depends(verify_token)):
-    """Mengembalikan konfigurasi sistem, termasuk model Gemini yang aktif dan Modal Awal."""
+def get_config(user_id: str = Depends(verify_token)):
     db = Session()
     try:
-        configs = db.query(AppConfig).all()
+        configs = db.query(AppConfig).filter_by(user_id=user_id).all()
         result = {
             "gemini_model": "gemini-2.5-flash",
             "initial_balance": 0.0,
@@ -236,15 +289,14 @@ def get_config(token: str = Depends(verify_token)):
         db.close()
 
 @app.post("/api/config")
-def update_config(data: ConfigUpdate, token: str = Depends(verify_token)):
-    """Memperbarui konfigurasi sistem."""
+def update_config(data: ConfigUpdate, user_id: str = Depends(verify_token)):
     db = Session()
     try:
         def update_or_create(key, value):
             if value is not None:
-                item = db.query(AppConfig).filter_by(key=key).first()
+                item = db.query(AppConfig).filter_by(user_id=user_id, key=key).first()
                 if not item:
-                    item = AppConfig(key=key, value=str(value))
+                    item = AppConfig(user_id=user_id, key=key, value=str(value))
                     db.add(item)
                 else:
                     item.value = str(value)
@@ -264,14 +316,11 @@ def update_config(data: ConfigUpdate, token: str = Depends(verify_token)):
         db.close()
 
 @app.get("/api/performance")
-def get_performance(token: str = Depends(verify_token)):
-    """Mengembalikan data performa portofolio (PnL) untuk chart."""
+def get_performance(user_id: str = Depends(verify_token)):
     db = Session()
     try:
-        # Ambil semua history SELL yang memiliki pnl_pct
-        trades = db.query(TradeHistory).filter(TradeHistory.action == "SELL", TradeHistory.pnl_pct.isnot(None)).order_by(TradeHistory.timestamp.asc()).all()
+        trades = db.query(TradeHistory).filter(TradeHistory.user_id == user_id, TradeHistory.action == "SELL", TradeHistory.pnl_pct.isnot(None)).order_by(TradeHistory.timestamp.asc()).all()
         
-        # Kelompokkan berdasarkan tanggal (YYYY-MM-DD)
         daily_pnl = {}
         for t in trades:
             date_str = t.timestamp.strftime("%Y-%m-%d")
@@ -283,10 +332,8 @@ def get_performance(token: str = Depends(verify_token)):
             if t.pnl_pct > 0:
                 daily_pnl[date_str]['win_count'] += 1
                 
-        # Konversi ke list yang terurut
         daily_list = list(daily_pnl.values())
         
-        # Hitung ringkasan total
         total_trades = sum(d['trade_count'] for d in daily_list)
         total_wins = sum(d['win_count'] for d in daily_list)
         overall_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
@@ -308,11 +355,9 @@ class TelegramTest(BaseModel):
     telegram_chat_id: str
 
 @app.post("/api/config/telegram_test")
-def test_telegram(data: TelegramTest, token: str = Depends(verify_token)):
-    """Mengirim pesan uji coba ke Telegram."""
+def test_telegram(data: TelegramTest, user_id: str = Depends(verify_token)):
     if not data.telegram_token or not data.telegram_chat_id:
         raise HTTPException(status_code=400, detail="Token dan Chat ID harus diisi")
-        
     try:
         from notifier import TelegramNotifier
         test_notifier = TelegramNotifier(token=data.telegram_token, chat_id=data.telegram_chat_id)
@@ -333,19 +378,17 @@ class BacktestRequest(BaseModel):
     trailing_stop_pct: float = 2.0
 
 @app.post("/api/backtest")
-def run_backtest(req: BacktestRequest, token: str = Depends(verify_token)):
-    """Menjalankan simulasi Backtest pada 1000 candle terakhir (OHLCV)."""
+def run_backtest(req: BacktestRequest, user_id: str = Depends(verify_token)):
+    # Logika backtest dibiarkan sama karena tidak mengubah database state
     try:
         from exchange_handler import IndodaxHandler
         handler = IndodaxHandler(api_key="", secret_key="", dry_run=True)
         symbol_api = req.symbol.replace("/", "")
         
-        # 1. Fetch data
         df = handler.fetch_hidden_ohlcv(symbol=symbol_api, tf=req.timeframe, limit=1000)
         if df.empty or len(df) < 60:
             raise HTTPException(status_code=400, detail="Gagal menarik data atau data terlalu sedikit")
             
-        # 2. Select Strategy
         from strategy import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy, GridTradingStrategy
         if req.strategy == "RSI Breakout":
             strat = RSIBreakoutStrategy()
@@ -356,7 +399,6 @@ def run_backtest(req: BacktestRequest, token: str = Depends(verify_token)):
         else:
             strat = MovingAverageStrategy()
             
-        # 3. Simulation Loop
         capital = req.initial_capital
         balance = capital
         coin_held = 0.0
@@ -374,7 +416,6 @@ def run_backtest(req: BacktestRequest, token: str = Depends(verify_token)):
             
             signal = strat.analyze(current_df)
             
-            # Trailing Stop
             if coin_held > 0 and req.use_trailing_stop:
                 if current_price > highest_price:
                     highest_price = current_price
@@ -382,12 +423,11 @@ def run_backtest(req: BacktestRequest, token: str = Depends(verify_token)):
                 if drop_pct >= req.trailing_stop_pct:
                     signal = "SELL"
                     
-            # DCA
             if coin_held > 0 and signal != "SELL" and req.use_dca and dca_count < req.dca_max_orders:
                 pnl_pct = ((current_price - entry_price) / entry_price) * 100
                 drop_threshold = req.dca_step_pct * (dca_count + 1)
                 if pnl_pct <= -drop_threshold:
-                    dca_amount = float(balance * 0.5) # use 50% of remaining balance for DCA
+                    dca_amount = float(balance * 0.5) 
                     if dca_amount > 10000:
                         balance -= dca_amount
                         total_invested += dca_amount
@@ -397,9 +437,8 @@ def run_backtest(req: BacktestRequest, token: str = Depends(verify_token)):
                         dca_count += 1
                         trades.append({"time": str(timestamp), "type": f"DCA #{dca_count}", "price": current_price, "amount": dca_amount, "pnl": None})
                         
-            # Main Signals
             if signal == "BUY" and coin_held == 0:
-                buy_amount = float(balance) # All-in per trade for simple backtest
+                buy_amount = float(balance) 
                 if buy_amount > 10000:
                     balance -= buy_amount
                     total_invested = buy_amount
@@ -416,7 +455,6 @@ def run_backtest(req: BacktestRequest, token: str = Depends(verify_token)):
                 coin_held = 0.0
                 trades.append({"time": str(timestamp), "type": "SELL", "price": current_price, "amount": sell_amount, "pnl": pnl_pct})
                 
-        # Force sell at end
         if coin_held > 0:
             current_price = float(df.iloc[-1]['close'])
             sell_amount = float(coin_held * current_price)
@@ -471,11 +509,10 @@ class BotConfigUpdate(BaseModel):
     use_autotune: Optional[bool] = None
 
 @app.post("/api/bot-config/{symbol_path:path}")
-def update_bot_config(symbol_path: str, config: BotConfigUpdate, token: str = Depends(verify_token)):
-    """Memperbarui pengaturan risiko (TP/SL) dan Strategi untuk koin tertentu."""
+def update_bot_config(symbol_path: str, config: BotConfigUpdate, user_id: str = Depends(verify_token)):
     db = Session()
     try:
-        state = db.query(BotState).filter_by(symbol=symbol_path).first()
+        state = db.query(BotState).filter_by(user_id=user_id, symbol=symbol_path).first()
         if not state:
             return {"error": "Coin not found"}
             
@@ -491,10 +528,7 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate, token: str = De
             state.is_active = 1 if config.is_active else 0
         if config.entry_price is not None:
             state.entry_price = config.entry_price
-            # Reset IDR Invested agar main.py bisa menghitung ulang (jika manual entry price)
             state.total_idr_invested = 0.0
-            
-            # Auto-set last_buy_time if entry_price is set manually and last_buy_time is 0
             if config.entry_price > 0 and (state.last_buy_time or 0.0) == 0.0:
                 import time
                 state.last_buy_time = time.time()
@@ -531,7 +565,6 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate, token: str = De
         if config.use_trailing_buy is not None:
             state.use_trailing_buy = 1 if config.use_trailing_buy else 0
             if not config.use_trailing_buy:
-                # Reset tracking if turned off
                 state.trailing_buy_active = 0
         if config.trailing_buy_pct is not None:
             state.trailing_buy_pct = config.trailing_buy_pct
@@ -550,33 +583,27 @@ def update_bot_config(symbol_path: str, config: BotConfigUpdate, token: str = De
         db.close()
 
 @app.get("/api/logs")
-def get_system_logs(token: str = Depends(verify_token)):
-    """Mengembalikan 200 baris terakhir dari log sistem (bot.log)."""
+def get_system_logs(user_id: str = Depends(verify_token)):
+    # Logs masih global karena ditulis ke file fisik
     import os
     log_file = "logs/bot.log"
     if not os.path.exists(log_file):
         return {"logs": ["File log belum tersedia. Menunggu bot berjalan..."]}
-    
     try:
         with open(log_file, "r") as f:
             lines = f.readlines()
-            # Ambil 200 baris terakhir, dan hilangkan newline di akhir string
             return {"logs": [line.strip() for line in lines[-200:]]}
     except Exception as e:
         return {"error": str(e)}
 
 @app.get("/api/notifications")
-def get_notifications(token: str = Depends(verify_token)):
-    """Mengambil notifikasi yang belum dibaca atau 20 notifikasi terbaru."""
+def get_notifications(user_id: str = Depends(verify_token)):
     db = Session()
     try:
         from database import Notification
-        
-        # Ambil semua yang unread ATAU maksimal 20 terbaru jika sudah dibaca
-        unread = db.query(Notification).filter_by(is_read=0).order_by(Notification.timestamp.desc()).all()
+        unread = db.query(Notification).filter_by(user_id=user_id, is_read=0).order_by(Notification.timestamp.desc()).all()
         if len(unread) < 10:
-            latest = db.query(Notification).order_by(Notification.timestamp.desc()).limit(20).all()
-            # Hindari duplikat
+            latest = db.query(Notification).filter_by(user_id=user_id).order_by(Notification.timestamp.desc()).limit(20).all()
             seen_ids = set()
             combined = []
             for n in unread + latest:
@@ -601,12 +628,11 @@ def get_notifications(token: str = Depends(verify_token)):
         db.close()
 
 @app.post("/api/notifications/read")
-def mark_notifications_read(token: str = Depends(verify_token)):
-    """Menandai semua notifikasi sebagai sudah dibaca."""
+def mark_notifications_read(user_id: str = Depends(verify_token)):
     db = Session()
     try:
         from database import Notification
-        db.query(Notification).filter_by(is_read=0).update({"is_read": 1})
+        db.query(Notification).filter_by(user_id=user_id, is_read=0).update({"is_read": 1})
         db.commit()
         return {"success": True}
     finally:

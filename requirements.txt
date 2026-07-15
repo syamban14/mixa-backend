@@ -7,3 +7,5 @@ uvicorn
 sqlalchemy
 feedparser
 psycopg2-binary==2.9.9
+PyJWT==2.8.0
+google-auth==2.26.1
