@@ -261,6 +261,7 @@ class ConfigUpdate(BaseModel):
     indodax_api_key: Optional[str] = None
     indodax_secret_key: Optional[str] = None
     auto_screener_enabled: Optional[bool] = None
+    max_active_coins: Optional[int] = None
 
 @app.get("/api/config")
 def get_config(user_id: str = Depends(verify_token)):
@@ -274,7 +275,8 @@ def get_config(user_id: str = Depends(verify_token)):
             "telegram_chat_id": "",
             "indodax_api_key": "",
             "indodax_secret_key": "",
-            "auto_screener_enabled": False
+            "auto_screener_enabled": False,
+            "max_active_coins": 5
         }
         for c in configs:
             if c.key == "GEMINI_MODEL": result["gemini_model"] = c.value
@@ -284,6 +286,7 @@ def get_config(user_id: str = Depends(verify_token)):
             elif c.key == "INDODAX_API_KEY": result["indodax_api_key"] = c.value
             elif c.key == "INDODAX_SECRET_KEY": result["indodax_secret_key"] = c.value
             elif c.key == "AUTO_SCREENER_ENABLED": result["auto_screener_enabled"] = (c.value.lower() == 'true')
+            elif c.key == "MAX_ACTIVE_COINS": result["max_active_coins"] = int(c.value) if c.value else 5
         return result
     finally:
         db.close()
@@ -309,6 +312,8 @@ def update_config(data: ConfigUpdate, user_id: str = Depends(verify_token)):
         update_or_create("INDODAX_SECRET_KEY", data.indodax_secret_key)
         if data.auto_screener_enabled is not None:
             update_or_create("AUTO_SCREENER_ENABLED", str(data.auto_screener_enabled))
+        if data.max_active_coins is not None:
+            update_or_create("MAX_ACTIVE_COINS", str(data.max_active_coins))
         
         db.commit()
         return {"message": "Konfigurasi berhasil disimpan"}

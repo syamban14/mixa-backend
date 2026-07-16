@@ -11,7 +11,7 @@ from exchange_handler import IndodaxHandler
 from strategy import MovingAverageStrategy, RSIBreakoutStrategy, BollingerBandsStrategy, GridTradingStrategy
 from database import init_db, BotState, TradeHistory, AppConfig, Notification
 from news_scraper import NewsScraper
-from screener import run_auto_screener
+from screener import fetch_trending_tickers, run_auto_screener_for_user
 from notifier import TelegramNotifier
 from mixa_ai import MixaAI
 
@@ -360,6 +360,8 @@ def main():
     notifier.send_message(f"🚀 **Bot Mesin Multi-Tugas Aktif**\nMode: {status_mode}")
 
     last_news_time = 0
+    last_screener_time = 0
+    dummy_executor = IndodaxHandler(api_key="", secret_key="", dry_run=True)
     
     while True:
         try:
@@ -368,6 +370,41 @@ def main():
                 logging.info("Memperbarui berita global...")
                 latest_news = scraper.fetch_latest_news(limit=5)
                 last_news_time = current_time
+                
+            if current_time - last_screener_time > 3600:
+                logging.info("--- [GLOBAL SCREENER] Memulai Evaluasi Portofolio Otomatis ---")
+                top_volume = fetch_trending_tickers(dummy_executor)
+                if top_volume:
+                    db_sess = Session()
+                    try:
+                        from database import User, get_wib_time
+                        now = get_wib_time()
+                        screener_configs = db_sess.query(AppConfig).filter_by(key="AUTO_SCREENER_ENABLED", value="True").all()
+                        for conf in screener_configs:
+                            user_id = conf.user_id
+                            max_c_conf = db_sess.query(AppConfig).filter_by(user_id=user_id, key="MAX_ACTIVE_COINS").first()
+                            max_coins = int(max_c_conf.value) if max_c_conf else 5
+                            
+                            has_access = False
+                            if user_id == "admin@mixa.ai":
+                                has_access = True
+                            else:
+                                user_db = db_sess.query(User).filter_by(email=user_id).first()
+                                if user_db:
+                                    if user_db.subscription_ends_at and user_db.subscription_ends_at > now: has_access = True
+                                    elif user_db.trial_ends_at and user_db.trial_ends_at > now: has_access = True
+                                    
+                            if has_access:
+                                api_conf = db_sess.query(AppConfig).filter_by(user_id=user_id, key="INDODAX_API_KEY").first()
+                                sec_conf = db_sess.query(AppConfig).filter_by(user_id=user_id, key="INDODAX_SECRET_KEY").first()
+                                if api_conf and sec_conf and api_conf.value and sec_conf.value:
+                                    user_executor = IndodaxHandler(api_key=api_conf.value, secret_key=sec_conf.value, dry_run=DRY_RUN)
+                                    run_auto_screener_for_user(user_id, user_executor, db_sess, top_volume, max_coins)
+                    except Exception as e:
+                        logging.error(f"Screener Error: {e}")
+                    finally:
+                        db_sess.close()
+                last_screener_time = current_time
                 
             db_session = Session()
             try:
