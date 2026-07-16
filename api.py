@@ -269,6 +269,7 @@ def get_config(user_id: str = Depends(verify_token)):
     try:
         configs = db.query(AppConfig).filter_by(user_id=user_id).all()
         result = {
+            "is_admin": user_id == "admin@mixa.ai",
             "gemini_model": "gemini-2.5-flash",
             "initial_balance": 0.0,
             "telegram_token": "",
@@ -281,7 +282,7 @@ def get_config(user_id: str = Depends(verify_token)):
         for c in configs:
             if c.key == "GEMINI_MODEL": result["gemini_model"] = c.value
             elif c.key == "INITIAL_BALANCE": result["initial_balance"] = float(c.value) if c.value else 0.0
-            elif c.key == "TELEGRAM_BOT_TOKEN": result["telegram_token"] = c.value
+            elif c.key == "TELEGRAM_BOT_TOKEN" and user_id == "admin@mixa.ai": result["telegram_token"] = c.value
             elif c.key == "TELEGRAM_CHAT_ID": result["telegram_chat_id"] = c.value
             elif c.key == "INDODAX_API_KEY": result["indodax_api_key"] = c.value
             elif c.key == "INDODAX_SECRET_KEY": result["indodax_secret_key"] = c.value
@@ -306,7 +307,8 @@ def update_config(data: ConfigUpdate, user_id: str = Depends(verify_token)):
 
         update_or_create("GEMINI_MODEL", data.gemini_model)
         update_or_create("INITIAL_BALANCE", data.initial_balance)
-        update_or_create("TELEGRAM_BOT_TOKEN", data.telegram_token)
+        if user_id == "admin@mixa.ai":
+            update_or_create("TELEGRAM_BOT_TOKEN", data.telegram_token)
         update_or_create("TELEGRAM_CHAT_ID", data.telegram_chat_id)
         update_or_create("INDODAX_API_KEY", data.indodax_api_key)
         update_or_create("INDODAX_SECRET_KEY", data.indodax_secret_key)
@@ -356,20 +358,37 @@ def get_performance(user_id: str = Depends(verify_token)):
         db.close()
 
 class TelegramTest(BaseModel):
-    telegram_token: str
     telegram_chat_id: str
 
 @app.post("/api/config/telegram_test")
 def test_telegram(data: TelegramTest, user_id: str = Depends(verify_token)):
-    if not data.telegram_token or not data.telegram_chat_id:
-        raise HTTPException(status_code=400, detail="Token dan Chat ID harus diisi")
+    if not data.telegram_chat_id:
+        raise HTTPException(status_code=400, detail="Chat ID harus diisi")
+    db = Session()
     try:
         from notifier import TelegramNotifier
-        test_notifier = TelegramNotifier(token=data.telegram_token, chat_id=data.telegram_chat_id)
-        test_notifier.send_message("🟢 **Test Ping dari MIXA AI**\nKoneksi Telegram Anda berhasil terhubung dengan Dasbor!")
+        test_notifier = TelegramNotifier()
+        master_token, _ = test_notifier._get_credentials("admin@mixa.ai")
+        
+        if not master_token:
+            raise HTTPException(status_code=400, detail="Admin belum mengkonfigurasi Bot Token Utama")
+            
+        import requests
+        base_url = f"https://api.telegram.org/bot{master_token}/sendMessage"
+        payload = {
+            "chat_id": data.telegram_chat_id,
+            "text": f"🟢 **Test Ping dari MIXA AI (SaaS)**\nHalo {user_id}! Koneksi Telegram Anda berhasil terhubung dengan Dasbor!",
+            "parse_mode": "Markdown"
+        }
+        res = requests.post(base_url, json=payload, timeout=5)
+        if not res.ok:
+            raise HTTPException(status_code=400, detail=f"Gagal mengirim pesan: {res.text}")
+            
         return {"message": "Test message sent successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
 
 class BacktestRequest(BaseModel):
     symbol: str = "BTC/IDR"
@@ -690,3 +709,77 @@ def extend_subscription(req: ExtendSubRequest, user_id: str = Depends(verify_tok
     finally:
         db.close()
 
+@app.get("/api/admin/dashboard")
+def get_admin_dashboard(user_id: str = Depends(verify_token)):
+    if user_id != "admin@mixa.ai":
+        raise HTTPException(status_code=403, detail="Akses Ditolak: Hanya Admin")
+    
+    db = Session()
+    try:
+        from sqlalchemy import func
+        total_users = db.query(User).count()
+        
+        active_users = db.query(BotState.user_id).filter(BotState.is_active == 1).distinct().count()
+        
+        all_trades = db.query(TradeHistory).all()
+        total_volume = 0.0
+        
+        user_pnl = {}
+        
+        for trade in all_trades:
+            if trade.nominal:
+                val_str = trade.nominal.replace('Rp', '').replace(',', '').strip()
+                # Handle cases where nominal is "0.001 BTC"
+                if ' ' in val_str:
+                    val_str = val_str.split(' ')[0]
+                try:
+                    vol = float(val_str)
+                    # if it's too small, maybe it was asset amount instead of IDR, ignore for volume if < 1000? 
+                    # well, total_volume is an approximation
+                    total_volume += vol
+                except ValueError:
+                    pass
+                    
+            if trade.pnl_pct is not None:
+                uid = trade.user_id
+                if uid not in user_pnl:
+                    user_pnl[uid] = {'pnl_sum': 0.0, 'trade_count': 0, 'email': uid}
+                user_pnl[uid]['pnl_sum'] += trade.pnl_pct
+                user_pnl[uid]['trade_count'] += 1
+                
+        leaderboard = []
+        for uid, data in user_pnl.items():
+            if data['trade_count'] > 0:
+                avg_pnl = data['pnl_sum']
+                u_obj = db.query(User).filter_by(email=uid).first()
+                name = u_obj.name if u_obj and u_obj.name else uid.split('@')[0]
+                leaderboard.append({
+                    "email": uid,
+                    "name": name,
+                    "total_pnl_pct": avg_pnl,
+                    "trade_count": data['trade_count']
+                })
+        
+        leaderboard.sort(key=lambda x: x['total_pnl_pct'], reverse=True)
+        top_10 = leaderboard[:10]
+        
+        try:
+            import psutil
+            cpu_usage = psutil.cpu_percent(interval=0.1)
+            ram_usage = psutil.virtual_memory().percent
+        except ImportError:
+            cpu_usage = 0.0
+            ram_usage = 0.0
+            
+        return {
+            "total_users": total_users,
+            "active_users": active_users,
+            "total_volume": total_volume,
+            "leaderboard": top_10,
+            "server": {
+                "cpu": cpu_usage,
+                "ram": ram_usage
+            }
+        }
+    finally:
+        db.close()

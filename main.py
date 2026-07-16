@@ -239,7 +239,7 @@ def process_coin_for_user(user_id, symbol_indodax):
                             order = indodax_executor.place_buy_order(symbol_indodax, dca_amount)
                             if order:
                                 msg = f"[{user_id}] 🛒 **DCA / SAFETY ORDER!**\nTarget: {symbol_indodax}\nTahap: #{dca_count+1}\nNominal: Rp {dca_amount:,.0f}"
-                                notifier.send_message(msg)
+                                notifier.send_message(user_id, msg)
                                 state.total_idr_invested = (state.total_idr_invested or 0.0) + dca_amount
                                 state.dca_completed_orders = dca_count + 1
                                 
@@ -284,7 +284,7 @@ def process_coin_for_user(user_id, symbol_indodax):
                 indodax_executor.cancel_all_open_orders(symbol_indodax)
                 time.sleep(1)
                 if indodax_executor.place_buy_order(symbol_indodax, coin_buy_amount):
-                    notifier.send_message(f"[{user_id}] 🟢 **SINYAL BELI!**\nTarget: {symbol_indodax}\nNominal: Rp {coin_buy_amount:,.0f}")
+                    notifier.send_message(user_id, f"[{user_id}] 🟢 **SINYAL BELI!**\nTarget: {symbol_indodax}\nNominal: Rp {coin_buy_amount:,.0f}")
                     last_signals[mem_key] = "BUY"
                     state.entry_price = current_price_idr
                     state.highest_price_since_buy = current_price_idr
@@ -304,7 +304,7 @@ def process_coin_for_user(user_id, symbol_indodax):
                 
                 if indodax_executor.place_sell_order(symbol_indodax, amount_to_sell):
                     realized_pnl = ((current_price_idr - (state.entry_price or 0.0)) / (state.entry_price or 1.0)) * 100 if (state.entry_price or 0.0) > 0 else 0
-                    notifier.send_message(f"[{user_id}] 🔴 **SINYAL JUAL!**\nTarget: {symbol_indodax}\nHasil PnL: {realized_pnl:.2f}%")
+                    notifier.send_message(user_id, f"[{user_id}] 🔴 **SINYAL JUAL!**\nTarget: {symbol_indodax}\nHasil PnL: {realized_pnl:.2f}%")
                     last_signals[mem_key] = "SELL"
                     state.entry_price, state.highest_price_since_buy, state.last_buy_time, state.total_idr_invested, state.dca_completed_orders = 0.0, 0.0, 0.0, 0.0, 0
                     last_sell_times[mem_key] = time.time()
@@ -357,7 +357,7 @@ def main():
     
     status_mode = 'SIMULASI (DRY RUN)' if DRY_RUN else 'RIIL (UANG ASLI)'
     logging.info(f"Bot Multi-Tenant Multi-Thread Dimulai. Mode: {status_mode}")
-    notifier.send_message(f"🚀 **Bot Mesin Multi-Tugas Aktif**\nMode: {status_mode}")
+    notifier.send_message("admin@mixa.ai", f"🚀 **Bot Mesin Multi-Tugas Aktif**\nMode: {status_mode}")
 
     last_news_time = 0
     last_screener_time = 0
