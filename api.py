@@ -637,3 +637,51 @@ def mark_notifications_read(user_id: str = Depends(verify_token)):
         return {"success": True}
     finally:
         db.close()
+
+class ExtendSubRequest(BaseModel):
+    email: str
+    days: int
+
+@app.get("/api/admin/users")
+def get_all_users(user_id: str = Depends(verify_token)):
+    if user_id != "admin@mixa.ai":
+        raise HTTPException(status_code=403, detail="Akses Ditolak: Hanya Admin")
+    db = Session()
+    try:
+        users = db.query(User).all()
+        result = []
+        for u in users:
+            result.append({
+                "email": u.email,
+                "name": u.name,
+                "picture": u.picture,
+                "trial_ends_at": u.trial_ends_at.isoformat() if u.trial_ends_at else None,
+                "subscription_ends_at": u.subscription_ends_at.isoformat() if u.subscription_ends_at else None
+            })
+        return result
+    finally:
+        db.close()
+
+@app.post("/api/admin/extend-sub")
+def extend_subscription(req: ExtendSubRequest, user_id: str = Depends(verify_token)):
+    if user_id != "admin@mixa.ai":
+        raise HTTPException(status_code=403, detail="Akses Ditolak: Hanya Admin")
+    db = Session()
+    try:
+        from database import get_wib_time
+        now = get_wib_time()
+        user = db.query(User).filter_by(email=req.email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User tidak ditemukan")
+        
+        current_end = user.subscription_ends_at or user.trial_ends_at or now
+        if current_end < now:
+            current_end = now
+            
+        new_end = current_end + timedelta(days=req.days)
+        user.subscription_ends_at = new_end
+        db.commit()
+        return {"message": f"Masa aktif diperpanjang hingga {new_end.strftime('%d %b %Y')}"}
+    finally:
+        db.close()
+

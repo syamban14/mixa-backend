@@ -371,9 +371,28 @@ def main():
                 
             db_session = Session()
             try:
-                # Dapatkan semua pasangan unik (user_id, symbol) yang aktif dari seluruh DB!
+                from database import User, get_wib_time
+                now = get_wib_time()
+                # Dapatkan semua koin aktif, lalu saring berdasarkan masa aktif user
                 active_states = db_session.query(BotState).filter_by(is_active=1).all()
-                tasks = [(state.user_id, state.symbol) for state in active_states]
+                tasks = []
+                for state in active_states:
+                    if state.user_id == "admin@mixa.ai":
+                        tasks.append((state.user_id, state.symbol))
+                        continue
+                        
+                    user = db_session.query(User).filter_by(email=state.user_id).first()
+                    if user:
+                        has_access = False
+                        if user.subscription_ends_at and user.subscription_ends_at > now:
+                            has_access = True
+                        elif user.trial_ends_at and user.trial_ends_at > now:
+                            has_access = True
+                            
+                        if has_access:
+                            tasks.append((state.user_id, state.symbol))
+                        else:
+                            logging.warning(f"[{state.user_id}] Masa aktif habis! Operasi koin {state.symbol} ditangguhkan.")
             finally:
                 db_session.close()
                 
