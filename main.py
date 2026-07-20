@@ -35,6 +35,7 @@ last_buy_times = {}
 last_mixa_times = {}
 last_signals = {}
 last_sell_times = {}
+last_ai_eval_times = {}
 latest_news = []
 
 def get_memory_key(user_id, symbol):
@@ -55,6 +56,7 @@ def process_coin_for_user(user_id, symbol_indodax):
             last_signals[mem_key] = "HOLD"
             last_sell_times[mem_key] = 0.0
             last_mixa_times[mem_key] = time.time() - 900
+            last_ai_eval_times[mem_key] = 0.0
             
         koin_utama = symbol_indodax.split('/')[0] # 'BTC'
         api_symbol = symbol_indodax.replace('/', '') # 'BTCIDR'
@@ -145,12 +147,28 @@ def process_coin_for_user(user_id, symbol_indodax):
         current_price_idr = float(df.iloc[-1]['close'])
         
         # ==== DYNAMIC STRATEGY ROUTING ====
-        if state.strategy == "RSI Breakout": strategy = RSIBreakoutStrategy(period=14)
-        elif state.strategy == "Bollinger Bands": strategy = BollingerBandsStrategy(period=20)
-        elif state.strategy == "Grid Trading": strategy = GridTradingStrategy(period=20)
-        else: strategy = MovingAverageStrategy(fast_period=10, slow_period=50)
-            
-        signal = strategy.analyze(df)
+        if state.strategy == "Gemini AI":
+            current_time = time.time()
+            if current_time - last_ai_eval_times[mem_key] >= 900: # Evaluasi tiap 15 menit
+                config_model = db_session.query(AppConfig).filter_by(user_id=user_id, key="GEMINI_MODEL").first()
+                model_name = config_model.value if config_model else "gemini-2.5-flash"
+                current_pos = (state.entry_price or 0.0) > 0
+                ai_result = mixa.get_ai_trading_signal(df, current_pos, model_name=model_name, news=latest_news)
+                signal = ai_result.get('signal', 'HOLD')
+                state.mixa_insight = f"[{signal}] {ai_result.get('reason', '')}"
+                last_ai_eval_times[mem_key] = current_time
+                db_session.commit()
+            else:
+                signal = "HOLD"
+                
+            # Fallback jika terjadi force sell oleh sistem lain (contoh: trailing stop nanti)
+        else:
+            if state.strategy == "RSI Breakout": strategy = RSIBreakoutStrategy(period=14)
+            elif state.strategy == "Bollinger Bands": strategy = BollingerBandsStrategy(period=20)
+            elif state.strategy == "Grid Trading": strategy = GridTradingStrategy(period=20)
+            else: strategy = MovingAverageStrategy(fast_period=10, slow_period=50)
+                
+            signal = strategy.analyze(df)
         
         # ==== PHASE 1: MACRO TREND FILTER (4H) ====
         if signal == "BUY" and getattr(state, 'use_macro_trend', 0) == 1:
